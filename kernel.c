@@ -12,6 +12,7 @@
 #include "symbols.h"
 #include "eth.h"
 #include "net.h"
+#include "lcd.h"
 
 extern char _end;
 
@@ -732,6 +733,22 @@ void kernel_main(void) {
     puts("Initializing MyFS...\n");
     fs_init();
     puts("  filesystem ready\n");
+
+    puts("Init LCD (320x240 RGB565)...\n");
+    lcd_init(320, 240, 0x00200000);
+
+    lcd_clear(LCD_BLACK);
+    {
+        int bar_h = 240 / 6;
+        lcd_fill_rect(  0, 0*bar_h, 320, bar_h, LCD_RED);
+        lcd_fill_rect(  0, 1*bar_h, 320, bar_h, LCD_YELLOW);
+        lcd_fill_rect(  0, 2*bar_h, 320, bar_h, LCD_GREEN);
+        lcd_fill_rect(  0, 3*bar_h, 320, bar_h, LCD_CYAN);
+        lcd_fill_rect(  0, 4*bar_h, 320, bar_h, LCD_BLUE);
+        lcd_fill_rect(  0, 5*bar_h, 320, bar_h, LCD_MAGENTA);
+    }
+    lcd_enable();
+    puts("  LCD ready\n");
 
     puts("Creating tasks...\n");
     task_create(0, task_terminal, "term");

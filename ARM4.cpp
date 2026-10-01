@@ -1526,12 +1526,12 @@ public:
         uint32_t addr = u ? (base + offset) : (base - offset);
         if (l) {
             uint32_t val = 0;
-            if (!h && s)       val = (uint32_t)(int32_t)(int8_t)mem.read8(addr);
-            else if (!h && !s) val = mem.read16(addr & ~1u);
-            else if (h && s)   val = (uint32_t)(int32_t)(int16_t)mem.read16(addr & ~1u);
+            if      (s && !h) val = (uint32_t)(int32_t)(int8_t) mem.read8(addr);          /* LDRSB */
+            else if (s &&  h) val = (uint32_t)(int32_t)(int16_t)mem.read16(addr & ~1u);   /* LDRSH */
+            else if (!s && h) val = mem.read16(addr & ~1u);                                /* LDRH  */
             cpu.set_reg(rd, val);
         } else {
-            if (!h && !s) mem.write16(addr & ~1u, (uint16_t)cpu.get_reg(rd));
+            if (!s && h) mem.write16(addr & ~1u, (uint16_t)cpu.get_reg(rd));              /* STRH  */
         }
         if (!p) cpu.set_reg(rn, addr);
         else if (w) cpu.set_reg(rn, addr);
