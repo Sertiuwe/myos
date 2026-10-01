@@ -21,6 +21,7 @@
 #include "cache.h"
 #include "vmcu.h"
 #include "virtlcd.h"
+#include "virtsd.h"
 #include "mmu.h"
 #include "virteth.h"
 
@@ -1106,6 +1107,7 @@ public:
     VirtEth    eth{0x10016000, "ETH0"};
     VMCU       vmcu{0x10110000, "VMCU"};
     VirtLCD    lcd {0x10120000, "LCD"};
+    VirtSD     sd  {0x10100000, "SD"};
     CP15       cp15;
     MMU        mmu;
 
@@ -2136,6 +2138,7 @@ uint32_t Memory::read32(uint32_t a) {
         if (emu->eth.contains(a))    return emu->eth.read(a, 4);
         if (emu->vmcu.contains(a))   return emu->vmcu.read(a, 4);
         if (emu->lcd.contains(a))    return emu->lcd.read(a, 4);
+        if (emu->sd.contains(a))    return emu->sd.read(a, 4);
     }
     if (!valid32(a)) { flag_fault(a, false); return 0; }
     // shared ARM4<->VMCU регион 0x70000-0x70FFF — без кеша
@@ -2166,6 +2169,7 @@ uint16_t Memory::read16(uint32_t a) {
         if (emu->eth.contains(a))    return (uint16_t)emu->eth.read(a, 2);
         if (emu->vmcu.contains(a))   return (uint16_t)emu->vmcu.read(a, 2);
         if (emu->lcd.contains(a))    return (uint16_t)emu->lcd.read(a, 2);
+        if (emu->sd.contains(a))    return (uint16_t)emu->sd.read(a, 2);
     }
     if (!valid16(a)) { flag_fault(a, false); return 0; }
     if (a >= 0x70000 && a < 0x71000) {
@@ -2220,6 +2224,7 @@ uint8_t Memory::read8(uint32_t a) {
         if (emu->eth.contains(a))    return (uint8_t)emu->eth.read(a, 1);
         if (emu->vmcu.contains(a))   return (uint8_t)emu->vmcu.read(a, 1);
         if (emu->lcd.contains(a))    return (uint8_t)emu->lcd.read(a, 1);
+        if (emu->sd.contains(a))    return (uint8_t)emu->sd.read(a, 1);
     }
     if (!valid8(a)) { flag_fault(a, false); return 0; }
     if (a >= 0x70000 && a < 0x71000) return data[a];
@@ -2246,6 +2251,7 @@ void Memory::write32(uint32_t a, uint32_t v) {
         if (emu->eth.contains(a))    { emu->eth.write(a, v, 4); return; }
         if (emu->vmcu.contains(a))   { emu->vmcu.write(a, v, 4); return; }
         if (emu->lcd.contains(a))    { emu->lcd.write(a, v, 4); return; }
+        if (emu->sd.contains(a))    { emu->sd.write(a, v, 4); return; }
     }
     if (!valid32(a)) { flag_fault(a, true); return; }
     if (a >= 0x70000 && a < 0x71000) {
@@ -2274,6 +2280,7 @@ void Memory::write16(uint32_t a, uint16_t v) {
         if (emu->eth.contains(a))    { emu->eth.write(a, v, 2); return; }
         if (emu->vmcu.contains(a))   { emu->vmcu.write(a, v, 2); return; }
         if (emu->lcd.contains(a))    { emu->lcd.write(a, v, 2); return; }
+        if (emu->sd.contains(a))    { emu->sd.write(a, v, 2); return; }
     }
     if (!valid16(a)) { flag_fault(a, true); return; }
     if (a >= 0x70000 && a < 0x71000) {
@@ -2302,6 +2309,7 @@ void Memory::write8(uint32_t a, uint8_t v) {
         if (emu->eth.contains(a))    { emu->eth.write(a, v, 1); return; }
         if (emu->vmcu.contains(a))   { emu->vmcu.write(a, v, 1); return; }
         if (emu->lcd.contains(a))    { emu->lcd.write(a, v, 1); return; }
+        if (emu->sd.contains(a))    { emu->sd.write(a, v, 1); return; }
     }
     if (!valid8(a)) { flag_fault(a, true); return; }
     if (a >= 0x70000 && a < 0x71000) { data[a] = v; return; }
