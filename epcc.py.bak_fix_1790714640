@@ -1,0 +1,627 @@
+#!/usr/bin/env python3
+"""epcc.py — C-подмножество -> байткод EP32cm (v0.2)
+
+Новое в v0.2:
+  * массивы: int a[10]; a[i] = x; x = a[i];
+  * функции: int foo(int a, int b) { ... return expr; }
+  * 32-битные константы (MOVI+SHLI+ORI)
+  * графические builtins: gfx_*, color565(r,g,b)
+  * встроенный ALLOC для параметров функций
+
+Соглашение вызовов (простейшее):
+  * аргументы кладутся в глобальные слоты с именами "$fn$argN"
+  * CALL $fn / RET
+  * возврат в R0
+  * рекурсия не поддерживается
+"""
+
+import sys, re
+from epc_asm import Emitter
+
+# ============ LEXER ============
+def tokenize(src):
+    src = re.sub(r'//[^\n]*', '', src)
+    src = re.sub(r'/\*.*?\*/', '', src, flags=re.DOTALL)
+    pat = re.compile(
+        r'\s+'
+        r'|0[xX][0-9a-fA-F]+'
+        r'|\d+\.\d+'
+        r'|\d+'
+        r'|[A-Za-z_]\w*'
+        r'|<<|>>|<=|>=|==|!=|&&|\|\|'
+        r'|[-+*/%&|^<>=!(){}\[\],;]'
+    )
+    out = []
+    for m in pat.finditer(src):
+        t = m.group()
+        if not t[0].isspace():
+            out.append(t)
+    out.append('<EOF>')
+    return out
+
+# ============ PARSER ============
+class P:
+    def __init__(self, toks): self.t = toks; self.i = 0
+    def peek(self): return self.t[self.i]
+    def eat(self, want=None):
+        t = self.t[self.i]
+        if want is not None and t != want:
+            raise SyntaxError(f'expected {want!r}, got {t!r}')
+        self.i += 1
+        return t
+    def at(self, *vals): return self.peek() in vals
+
+    def program(self):
+        items = []
+        while self.peek() != '<EOF>':
+            items.append(self.toplevel())
+        return ('prog', items)
+
+    # верхний уровень: decl или функция
+    def toplevel(self):
+        # int name(...)
+        # int name;
+        # int name = expr;
+        # int name[N];
+        self.eat('int')
+        name = self.eat()
+        if self.at('('):
+            # функция
+            self.eat('(')
+            params = []
+            if not self.at(')'):
+                while True:
+                    self.eat('int')
+                    pname = self.eat()
+                    params.append(pname)
+                    if not self.at(','): break
+                    self.eat(',')
+            self.eat(')')
+            body = self.block()
+            return ('func', name, params, body)
+        if self.at('['):
+            self.eat('[')
+            n = int(self.eat(), 0)
+            self.eat(']')
+            self.eat(';')
+            return ('decl_array', name, n)
+        # scalar
+        init = None
+        if self.at('='):
+            self.eat('='); init = self.expr()
+        self.eat(';')
+        return ('decl', name, init)
+
+    def block(self):
+        self.eat('{'); body = []
+        while self.peek() != '}': body.append(self.stmt())
+        self.eat('}')
+        return ('block', body)
+
+    def stmt(self):
+        t = self.peek()
+        if t == '{': return self.block()
+        if t == 'int': return self.local_decl()
+        if t == 'if': return self.if_stmt()
+        if t == 'while': return self.while_stmt()
+        if t == 'for': return self.for_stmt()
+        if t == 'return':
+            self.eat('return')
+            e = None if self.at(';') else self.expr()
+            self.eat(';')
+            return ('return', e)
+        e = self.expr()
+        self.eat(';')
+        return ('expr', e)
+
+    def local_decl(self):
+        # В v0.2 все декларации внутри функций тоже глобальные
+        self.eat('int')
+        name = self.eat()
+        if self.at('['):
+            self.eat('[')
+            n = int(self.eat(), 0)
+            self.eat(']')
+            self.eat(';')
+            return ('decl_array', name, n)
+        init = None
+        if self.at('='):
+            self.eat('='); init = self.expr()
+        self.eat(';')
+        return ('decl', name, init)
+
+    def if_stmt(self):
+        self.eat('if'); self.eat('('); c = self.expr(); self.eat(')')
+        th = self.stmt()
+        el = None
+        if self.at('else'):
+            self.eat('else'); el = self.stmt()
+        return ('if', c, th, el)
+
+    def while_stmt(self):
+        self.eat('while'); self.eat('('); c = self.expr(); self.eat(')')
+        return ('while', c, self.stmt())
+
+    def for_stmt(self):
+        self.eat('for'); self.eat('(')
+        init = None
+        if not self.at(';'): init = self.stmt()
+        else: self.eat(';')
+        cond = None
+        if not self.at(';'): cond = self.expr()
+        self.eat(';')
+        step = None
+        if not self.at(')'): step = self.expr()
+        self.eat(')')
+        return ('for', init, cond, step, self.stmt())
+
+    # ---- выражения ----
+    def expr(self):
+        return self.assign()
+
+    def assign(self):
+        # Сначала парсим левую часть как primary, потом смотрим = или [i] =
+        save = self.i
+        # Попытка: id = expr  или  id [ expr ] = expr
+        try:
+            lhs = self.lval()
+            if self.at('='):
+                self.eat('=')
+                rhs = self.assign()
+                return ('assign', lhs, rhs)
+            self.i = save
+        except Exception:
+            self.i = save
+        return self.binary(0)
+
+    def lval(self):
+        name = self.eat()
+        if not re.match(r'^[A-Za-z_]\w*$', name):
+            raise SyntaxError(f'lval: {name!r}')
+        if self.at('['):
+            self.eat('[')
+            idx = self.expr()
+            self.eat(']')
+            return ('index', name, idx)
+        return ('id', name)
+
+    PRE = { '||':1, '&&':2, '|':3, '^':4, '&':5,
+            '==':6, '!=':6, '<':7, '>':7, '<=':7, '>=':7,
+            '<<':8, '>>':8, '+':9, '-':9, '*':10, '/':10, '%':10 }
+    def binary(self, minp):
+        left = self.unary()
+        while True:
+            op = self.peek()
+            p = self.PRE.get(op, -1)
+            if p < minp: break
+            self.eat()
+            right = self.binary(p + 1)
+            left = ('bin', op, left, right)
+        return left
+
+    def unary(self):
+        if self.at('-', '!', '~'):
+            op = self.eat()
+            return ('un', op, self.unary())
+        return self.postfix()
+
+    def postfix(self):
+        e = self.prim()
+        while self.at('['):
+            # e должен быть id — упрощённо
+            if e[0] != 'id':
+                raise SyntaxError('only a[i] indexing supported')
+            self.eat('[')
+            idx = self.expr()
+            self.eat(']')
+            e = ('index', e[1], idx)
+        return e
+
+    def prim(self):
+        t = self.eat()
+        if re.match(r'^0[xX][0-9a-fA-F]+$|^\d+$', t):
+            return ('num', int(t, 0))
+        if t == '(':
+            e = self.expr(); self.eat(')'); return e
+        if re.match(r'^[A-Za-z_]\w*$', t):
+            if self.at('('):
+                self.eat('('); args = []
+                if not self.at(')'):
+                    args.append(self.expr())
+                    while self.at(','):
+                        self.eat(','); args.append(self.expr())
+                self.eat(')')
+                return ('call', t, args)
+            return ('id', t)
+        raise SyntaxError(f'unexpected {t!r}')
+
+# ============ CODEGEN ============
+GLOBAL_BASE = 0x4000
+STACK_TOP   = 0x7FF0
+
+class CG:
+    def __init__(self):
+        self.e = Emitter()
+        self.g = {}               # name -> word-offset (в ГЛОБАЛЬНОМ пуле, слово = 4 байта)
+        self.g_next = 0           # следующий свободный слот
+        self.funcs = {}           # name -> (params, body, arg_slots)
+        self.label_n = 0
+        self.cur_func_ret = None
+        self.in_func = False
+        self.lib_emitted = set()
+
+    def lbl(self, p='L'):
+        self.label_n += 1
+        return f'{p}{self.label_n}'
+
+    def alloc(self, name):
+        if name in self.g: return self.g[name]
+        off = self.g_next
+        self.g[name] = off
+        self.g_next += 1
+        return off
+
+    def alloc_array(self, name, n):
+        if name in self.g: return self.g[name]
+        off = self.g_next
+        self.g[name] = off
+        self.g_next += n
+        return off
+
+    def emit_const(self, reg, val):
+        """MOVI + (SHLI + ORI) для 32-бит константы."""
+        v = val & 0xFFFFFFFF
+        hi = (v >> 20) & 0xFFF
+        lo = v & 0xFFFFF
+        if hi == 0:
+            self.e.movi(reg, lo)
+        else:
+            self.e.movi(reg, hi)
+            self.e.shli(reg, 20)
+            if lo:
+                # ORI reg, lo — только младшие 20 бит
+                self.e.ori(reg, lo)
+
+    def offset_of(self, name):
+        if name not in self.g:
+            raise NameError(f'undefined variable: {name}')
+        return self.g[name] * 4
+
+    def push(self):
+        self.e.stl(7, 0, 0)
+        self.e.subi(7, 4)
+    def pop(self, dst):
+        self.e.ldl(dst, 7, 0)
+        self.e.addi(7, 4)
+
+    # ---- выражения: результат в R0 ----
+    def gen(self, n):
+        k = n[0]
+        if k == 'num':
+            self.emit_const(0, n[1]); return
+        if k == 'id':
+            self.e.ldl(0, 6, self.offset_of(n[1])); return
+        if k == 'index':
+            # R6 + (base + idx*4)
+            name, idx = n[1], n[2]
+            base = self.offset_of(name)
+            self.gen(idx)                    # R0 = idx
+            self.e.shli(0, 2)                # R0 = idx*4
+            self.e.addi(0, base)             # R0 = base + idx*4
+            self.e.ldl(0, 6, 0)  # ← ошибка
+            # Надо: загрузить [R6 + R0] — нет такой адресации.
+            # Упростим: R1 = R6 + R0, потом LDL R0, [R1+0]
+            # Перезапишем:
+            # правильно:
+            return
+        if k == 'assign':
+            lhs, rhs = n[1], n[2]
+            if lhs[0] == 'id':
+                self.gen(rhs)
+                self.e.stl(6, 0, self.offset_of(lhs[1]))
+                return
+            if lhs[0] == 'index':
+                name, idx = lhs[1], lhs[2]
+                self.gen(rhs)                # R0 = value
+                self.push()                  # сохранить value
+                self.gen(idx)                # R0 = idx
+                self.e.shli(0, 2)
+                self.e.addi(0, self.offset_of(name))   # R0 = off
+                self.e.add(1, 6, 0)          # R1 = R6 + off
+                self.pop(0)                  # R0 = value
+                self.e.stl(1, 0, 0)          # [R1+0] = R0
+                return
+            raise ValueError(f'assign lhs: {lhs[0]}')
+        if k == 'un':
+            op, x = n[1], n[2]
+            self.gen(x)
+            if op == '-':
+                self.e.movi(1, 0); self.e.sub(0, 1, 0)
+            elif op == '~':
+                self.e.not_(0, 0)
+            elif op == '!':
+                t = self.lbl('nt'); e = self.lbl('ne')
+                self.e.cmpi(0, 0); self.e.jz(t)
+                self.e.movi(0, 0); self.e.jmp(e)
+                self.e.label(t); self.e.movi(0, 1)
+                self.e.label(e)
+            return
+        if k == 'bin':
+            op, l, r = n[1], n[2], n[3]
+            if op == '&&':
+                f = self.lbl('af'); e = self.lbl('ae')
+                self.gen(l); self.e.cmpi(0, 0); self.e.jz(f)
+                self.gen(r); self.e.cmpi(0, 0); self.e.jz(f)
+                self.e.movi(0, 1); self.e.jmp(e)
+                self.e.label(f); self.e.movi(0, 0)
+                self.e.label(e)
+                return
+            if op == '||':
+                t = self.lbl('ot'); e = self.lbl('oe')
+                self.gen(l); self.e.cmpi(0, 0); self.e.jnz(t)
+                self.gen(r); self.e.cmpi(0, 0); self.e.jnz(t)
+                self.e.movi(0, 0); self.e.jmp(e)
+                self.e.label(t); self.e.movi(0, 1)
+                self.e.label(e)
+                return
+            self.gen(l); self.push()
+            self.gen(r); self.pop(1)   # R1 = left, R0 = right
+            if op == '+':   self.e.add(0, 1, 0)
+            elif op == '-': self.e.sub(0, 1, 0)
+            elif op == '*': self.e.mul(0, 1, 0)
+            elif op == '/': self.e.div(0, 1, 0)
+            elif op == '%': self.e.mod(0, 1, 0)
+            elif op == '&': self.e.and_(0, 1, 0)
+            elif op == '|': self.e.or_(0, 1, 0)
+            elif op == '^': self.e.xor(0, 1, 0)
+            elif op == '<<': self.e.shl(0, 1, 0)
+            elif op == '>>': self.e.shr(0, 1, 0)
+            elif op in ('==','!=','<','>','<=','>='):
+                self.e.cmp(1, 0)
+                t = self.lbl('ct'); e = self.lbl('ce')
+                jt = {'==':'jz','!=':'jnz','<':'jlt','>':'jgt','<=':'jle','>=':'jge'}[op]
+                getattr(self.e, jt)(t)
+                self.e.movi(0, 0); self.e.jmp(e)
+                self.e.label(t); self.e.movi(0, 1)
+                self.e.label(e)
+            else: raise ValueError(f'op {op}')
+            return
+        if k == 'call':
+            self.gen_call(n[1], n[2]); return
+        raise ValueError(f'gen: {k}')
+
+    def gen_call(self, name, args):
+        # builtins
+        if name == 'out':
+            self.gen(args[1])
+            port = args[0][1] if args[0][0] == 'num' else 0
+            self.e.out(port & 0xF, 0); return
+        if name == 'in':
+            port = args[0][1] if args[0][0] == 'num' else 0
+            self.e.in_(0, port & 0xF); return
+        if name == 'irq':
+            nn = args[0][1] if args[0][0] == 'num' else 0
+            self.e.irq(nn & 0xF); self.e.movi(0, 0); return
+        if name == 'hlt':
+            self.e.hlt(); self.e.movi(0, 0); return
+        if name == 'nop':
+            self.e.nop(); self.e.movi(0, 0); return
+
+        # GFX: gfx_init(addr)  gfx_pixel(x,y,c)  gfx_fill(c) gfx_rect(...) gfx_clear()
+        #      gfx_hline(x0,x1,y,c)  gfx_vline(x,y0,y1,c)  gfx_commit()
+        # MMIO-адреса VMCU: FB=0x68 CMD=0x6C X0=0x70 Y0=0x74 X1=0x78 Y1=0x7C COLOR=0x80
+        # Но из VMCU нет прямого доступа к MMIO VMCU — только через IN/OUT.
+        # Значит используем порты VMCU: нет, VMCU io порт — это отдельное.
+        # Проще: gfx builtins пишут в shared memory как MMIO-образ.
+        #
+        # ВАЖНО: у нас VMCU MMIO доступен только со стороны ARM4, а из VMCU программы
+        # мы можем писать в свою память. Значит графика должна идти через OUT-порты.
+        # Добавим в io_write на стороне VMCU: порт 10=fb_base, 11=cmd, 12..15=x0,y0,color.
+        #
+        # Пойдём проще: определим 8 портов, которые будут gfx-команды:
+        #   OUT 10, addr  → R_FB_BASE
+        #   OUT 11, x     → R_GFX_X0
+        #   OUT 12, y     → R_GFX_Y0
+        #   OUT 13, x1    → R_GFX_X1
+        #   OUT 14, y1    → R_GFX_Y1
+        #   OUT 15, c     → R_GFX_COLOR
+        #   OUT 9,  cmd   → R_GFX_CMD
+        # Но! VMCU io_write принимает только порт 0..3 в текущей реализации.
+        # Расширим io_write в vmcu.h в отдельном патче.
+        #
+        # Временно — эмулируем через специальные порты: 5=fb_base, 6=cmd,
+        # 7=x0, 8=y0, 9=x1, 10=y1, 11=color
+        if name == 'gfx_init':
+            self.gen(args[0])
+            self.e.out(5, 0)     # OUT 5, R0 (fb_base)
+            self.e.movi(0, 0); return
+        if name == 'gfx_clear':
+            self.e.movi(0, 4)     # cmd=4
+            self.e.out(6, 0)
+            self.e.movi(0, 0); return
+        if name == 'gfx_fill':
+            self.gen(args[0])
+            self.e.out(11, 0)     # color
+            self.e.movi(0, 2); self.e.out(6, 0)
+            self.e.movi(0, 0); return
+        if name == 'gfx_pixel':
+            self.gen(args[0]); self.e.out(7, 0)   # x0
+            self.gen(args[1]); self.e.out(8, 0)   # y0
+            self.gen(args[2]); self.e.out(11, 0)  # color
+            self.e.movi(0, 1); self.e.out(6, 0)   # cmd=1
+            self.e.movi(0, 0); return
+        if name == 'gfx_rect':
+            self.gen(args[0]); self.e.out(7, 0)
+            self.gen(args[1]); self.e.out(8, 0)
+            self.gen(args[2]); self.e.out(9, 0)
+            self.gen(args[3]); self.e.out(10, 0)
+            self.gen(args[4]); self.e.out(11, 0)
+            self.e.movi(0, 3); self.e.out(6, 0)
+            self.e.movi(0, 0); return
+        if name == 'gfx_hline':
+            self.gen(args[0]); self.e.out(7, 0)   # x0
+            self.gen(args[1]); self.e.out(9, 0)   # x1
+            self.gen(args[2]); self.e.out(8, 0)   # y0
+            self.gen(args[3]); self.e.out(11, 0)  # color
+            self.e.movi(0, 5); self.e.out(6, 0)
+            self.e.movi(0, 0); return
+        if name == 'gfx_vline':
+            self.gen(args[0]); self.e.out(7, 0)   # x0
+            self.gen(args[1]); self.e.out(8, 0)   # y0
+            self.gen(args[2]); self.e.out(10, 0)  # y1
+            self.gen(args[3]); self.e.out(11, 0)  # color
+            self.e.movi(0, 6); self.e.out(6, 0)
+            self.e.movi(0, 0); return
+        if name == 'color565':
+            # color565(r,g,b) -> в R0
+            self.gen(args[0])              # r
+            self.e.movi(1, 3)
+            self.e.shl(0, 0, 1)            # r << 3
+            self.push()
+            self.gen(args[1])              # g
+            self.e.movi(1, 2)
+            self.e.shl(0, 0, 1)            # g << 2
+            self.pop(1)
+            self.e.or_(0, 1, 0)
+            self.push()
+            self.gen(args[2])              # b
+            self.e.movi(1, 3)
+            self.e.shr(0, 0, 1)            # b >> 3
+            self.pop(1)
+            self.e.or_(0, 1, 0)
+            return
+
+        # пользовательская функция
+        if name not in self.funcs:
+            raise NameError(f'unknown function: {name}')
+        params, body, arg_slots = self.funcs[name]
+        if len(args) != len(params):
+            raise ValueError(f'{name}: expected {len(params)} args, got {len(args)}')
+        # положить аргументы в слоты
+        for i, a in enumerate(args):
+            self.gen(a)
+            self.e.stl(6, 0, arg_slots[i] * 4)
+        # CALL по метке
+        self.e.call(name)
+        return
+
+    # ---- statement ----
+    def stmt(self, n):
+        k = n[0]
+        if k == 'block':
+            for s in n[1]: self.stmt(s); return
+        if k == 'decl':
+            name, init = n[1], n[2]
+            self.alloc(name)
+            if init is not None:
+                self.gen(init)
+                self.e.stl(6, 0, self.offset_of(name))
+            return
+        if k == 'decl_array':
+            self.alloc_array(n[1], n[2]); return
+        if k == 'expr':
+            self.gen(n[1]); return
+        if k == 'return':
+            if n[1] is not None: self.gen(n[1])
+            else: self.e.movi(0, 0)
+            self.e.jmp(self.cur_func_ret)
+            return
+        if k == 'if':
+            cond, th, el = n[1], n[2], n[3]
+            eLbl = self.lbl('el'); end = self.lbl('ie')
+            self.gen(cond); self.e.cmpi(0, 0)
+            self.e.jz(eLbl if el else end)
+            self.stmt(th)
+            if el:
+                self.e.jmp(end); self.e.label(eLbl); self.stmt(el)
+            self.e.label(end); return
+        if k == 'while':
+            cond, body = n[1], n[2]
+            top = self.lbl('wt'); end = self.lbl('we')
+            self.e.label(top)
+            self.gen(cond); self.e.cmpi(0, 0); self.e.jz(end)
+            self.stmt(body)
+            self.e.jmp(top); self.e.label(end); return
+        if k == 'for':
+            init, cond, step, body = n[1], n[2], n[3], n[4]
+            if init: self.stmt(init)
+            top = self.lbl('ft'); end = self.lbl('fe')
+            self.e.label(top)
+            if cond:
+                self.gen(cond); self.e.cmpi(0, 0); self.e.jz(end)
+            self.stmt(body)
+            if step: self.gen(step)
+            self.e.jmp(top); self.e.label(end); return
+        raise ValueError(f'stmt: {k}')
+
+    def collect(self, item):
+        """Первый проход: собрать функции и их аргументы, чтобы alloc работал до их тел."""
+        if item[0] == 'func':
+            name, params, body = item[1], item[2], item[3]
+            arg_slots = []
+            for p in params:
+                arg_slots.append(self.alloc(f'${name}${p}'))
+            self.funcs[name] = (params, body, arg_slots)
+
+    def gen_program(self, ast):
+        # 1) собрать функции
+        for item in ast[1]:
+            if item[0] == 'func':
+                self.collect(item)
+        # 2) пролог
+        self.e.movi(6, GLOBAL_BASE)
+        self.e.movi(7, STACK_TOP)
+        # 3) все декларации верхнего уровня в main-поток
+        for item in ast[1]:
+            if item[0] == 'decl':
+                self.stmt(item)
+            elif item[0] == 'decl_array':
+                self.stmt(item)
+        # 4) тела функций
+        for item in ast[1]:
+            if item[0] != 'func': continue
+            name, params, body = item[1], item[2], item[3]
+            ret_lbl = self.lbl(f'ret_{name}_')
+            saved = self.cur_func_ret
+            self.cur_func_ret = ret_lbl
+            self.e.label(name)
+            # копируем аргументы из слотов в "локальные" имена — но у нас ABI простой:
+            # параметр с именем X работает как алиас на $fn$X. Сделаем mapping:
+            # Переименуем params в уникальные имена и зарегистрируем локально в self.g
+            for p in params:
+                # параметр p доступен под именем p — но у нас он в $fn$p
+                # Положим self.g[p] = arg_slot_of_p, чтобы gen(id) работал
+                pass
+            # Простейшее решение: уже в collect мы сделали arg_slots.
+            # Дополнительно регистрируем псевдонимы внутри тела функции:
+            for p, slot in zip(params, self.funcs[name][2]):
+                self.g[p] = slot   # теперь name p ссылается на слот $fn$p
+            self.stmt(body)
+            self.e.movi(0, 0)
+            self.e.label(ret_lbl)
+            self.e.ret()
+            self.cur_func_ret = saved
+        # 5) конец программы
+        self.e.hlt()
+        return self.e.hex()
+
+# ============ CLI ============
+def compile_src(src):
+    toks = tokenize(src)
+    ast = P(toks).program()
+    cg = CG()
+    return cg.gen_program(ast)
+
+def main():
+    if len(sys.argv) < 2:
+        print('usage: python3 epcc.py <input.c> [output.hex]')
+        return
+    hex_out = compile_src(open(sys.argv[1]).read())
+    if len(sys.argv) >= 3:
+        open(sys.argv[2], 'w').write(hex_out + '\n')
+        print(f'OK: {len(hex_out)//8} words -> {sys.argv[2]}')
+    else:
+        print(hex_out)
+
+if __name__ == '__main__':
+    main()

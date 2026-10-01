@@ -1,0 +1,22 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- build artifacts ---
+*.o
+*.elf
+*.bin
+*.ssd
+*.hex
+build.log
+emul
+arm4emu
+
+# --- editor ---
+*.swp
+.DS_Store
+
+# --- local archive (не в git) ---
+_archive/
+_bak/

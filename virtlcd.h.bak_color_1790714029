@@ -1,0 +1,391 @@
+// virtlcd.h — PL111-совместимый LCD controller с выводом через notcurses
+//   * Регистры: LCDTiming0..3, LCDUPBASE, LCDLPBASE, LCDControl, LCDIMSC/RIS/MIS/ICR
+//   * BPP: 1/2/4/8/16/24 (реально используем 16 (RGB565) и 32 (ARGB8888))
+//   * Рендер: framebuffer из памяти ARM4 -> ASCII/Unicode через notcurses
+//   * IRQ source 17
+#ifndef ARM4_VIRTLCD_H
+#define ARM4_VIRTLCD_H
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <string>
+
+#ifdef HAVE_NOTCURSES
+  #include <notcurses/notcurses.h>
+  #include <locale.h>
+#endif
+
+class VirtLCD {
+public:
+    // ----- PL111 register offsets -----
+    enum Reg : uint32_t {
+        LCDTiming0    = 0x000,   // Horizontal timing
+        LCDTiming1    = 0x004,   // Vertical timing
+        LCDTiming2    = 0x008,   // Clock & signal polarity
+        LCDTiming3    = 0x00C,   // Line end / LPP
+        LCDUPBASE     = 0x010,   // Upper panel framebuffer base
+        LCDLPBASE     = 0x014,   // Lower panel framebuffer base
+        LCDControl    = 0x018,   // Control register
+        LCDIMSC       = 0x01C,   // Interrupt mask
+        LCDRIS        = 0x020,   // Raw interrupt status
+        LCDMIS        = 0x024,   // Masked interrupt status
+        LCDICR        = 0x028,   // Interrupt clear
+        LCDUPCURR     = 0x02C,   // Current upper panel addr
+        LCDLPCURR     = 0x030,   // Current lower panel addr
+        // PrimeCell ID
+        PERIPH_ID0    = 0xFE0,
+        PERIPH_ID1    = 0xFE4,
+        PERIPH_ID2    = 0xFE8,
+        PERIPH_ID3    = 0xFEC,
+        PCELL_ID0     = 0xFF0,
+        PCELL_ID1     = 0xFF4,
+        PCELL_ID2     = 0xFF8,
+        PCELL_ID3     = 0xFFC,
+    };
+
+    // ----- LCDControl bits -----
+    static constexpr uint32_t CNTL_LCDEN     = 1u << 0;
+    static constexpr uint32_t CNTL_LCDBPP_1  = 0u << 1;
+    static constexpr uint32_t CNTL_LCDBPP_2  = 1u << 1;
+    static constexpr uint32_t CNTL_LCDBPP_4  = 2u << 1;
+    static constexpr uint32_t CNTL_LCDBPP_8  = 3u << 1;
+    static constexpr uint32_t CNTL_LCDBPP_16 = 4u << 1;  // RGB565
+    static constexpr uint32_t CNTL_LCDBPP_24 = 5u << 1;  // ARGB8888 (24 valid)
+    static constexpr uint32_t CNTL_LCDBPP_32 = 6u << 1;
+    static constexpr uint32_t CNTL_LCDBW     = 1u << 4;  // STN mono
+    static constexpr uint32_t CNTL_LCDTFT    = 1u << 5;  // TFT
+    static constexpr uint32_t CNTL_LCDMONO8  = 1u << 6;
+    static constexpr uint32_t CNTL_LCDDUAL   = 1u << 7;
+    static constexpr uint32_t CNTL_BGR       = 1u << 8;
+    static constexpr uint32_t CNTL_BEBO      = 1u << 9;
+    static constexpr uint32_t CNTL_BEPO      = 1u << 10;
+    static constexpr uint32_t CNTL_LCDPWR    = 1u << 11;
+    static constexpr uint32_t CNTL_LCDVCOMP0 = 0u << 12;
+    static constexpr uint32_t CNTL_LCDVCOMP1 = 1u << 12;
+    static constexpr uint32_t CNTL_LCDVCOMP2 = 2u << 12;
+
+    // ----- Состояние -----
+    uint32_t base;
+    const char* name;
+
+    uint32_t timing0 = 0, timing1 = 0, timing2 = 0, timing3 = 0;
+    uint32_t upbase  = 0, lpbase = 0;
+    uint32_t control = 0;
+    uint32_t imsc    = 0;
+    uint32_t ris     = 0;
+    uint32_t icr     = 0;
+
+    // Разрешение дисплея в пикселях (настраивается через Timing)
+    int width  = 320;
+    int height = 240;
+
+    // Текущие размеры терминала (колонки x строки)
+    int term_cols = 80;
+    int term_rows = 24;
+
+    // Framebuffer-указатель (устанавливается снаружи: emu.mem.data)
+    uint8_t* arm4_mem = nullptr;
+    size_t   arm4_mem_size = 0;
+
+    // Notcurses context
+#ifdef HAVE_NOTCURSES
+    notcurses* nc = nullptr;
+    ncplane*  plane = nullptr;
+    bool      nc_ready = false;
+#endif
+
+    // ANSI fallback
+    bool ansi_only = false;
+    bool ansi_clear_done = false;
+    bool prefer_notcurses = false;   // включить notcurses (иначе inline ANSI)
+
+    // Статистика
+    uint64_t renders = 0;
+    uint64_t frames_skipped = 0;
+    uint32_t last_hash = 0;
+
+    VirtLCD(uint32_t b, const char* n) : base(b), name(n) {}
+    ~VirtLCD() { shutdown(); }
+
+    bool contains(uint32_t a) const { return a >= base && a < base + 0x1000; }
+
+    void attach_mem(uint8_t* m, size_t sz) { arm4_mem = m; arm4_mem_size = sz; }
+
+    // ----- Инициализация notcurses -----
+    bool init_term() {
+        if (!prefer_notcurses) {
+            ansi_only = true;
+            term_rows = 24; term_cols = 80;
+            return true;
+        }
+#ifdef HAVE_NOTCURSES
+        if (nc_ready) return true;
+        setlocale(LC_ALL, "");
+        notcurses_options opts{};
+        opts.flags = NCOPTION_SUPPRESS_BANNERS;
+        nc = notcurses_init(&opts, stdout);
+        if (!nc) return false;
+        plane = notcurses_stdplane(nc);
+        unsigned rows = 0, cols = 0;
+        ncplane_dim_yx(plane, &rows, &cols);
+        term_rows = (int)rows;
+        term_cols = (int)cols;
+        nc_ready = true;
+        return true;
+#else
+        // ANSI fallback: получить размеры через ioctl
+        term_rows = 24; term_cols = 80;
+        ansi_only = true;
+        return true;
+#endif
+    }
+
+    void shutdown() {
+#ifdef HAVE_NOTCURSES
+        if (nc_ready) { notcurses_stop(nc); nc = nullptr; plane = nullptr; nc_ready = false; }
+#endif
+        if (ansi_only && ansi_clear_done) {
+            std::printf("\033[?25h\033[H\n");   // показать курсор, домой
+            std::fflush(stdout);
+            ansi_clear_done = false;
+        }
+    }
+
+    // ----- Регистры -----
+    uint32_t read(uint32_t addr, int width) {
+        uint32_t off = addr - base;
+        uint32_t v = 0;
+        switch (off & ~3u) {
+            case LCDTiming0: v = timing0; break;
+            case LCDTiming1: v = timing1; break;
+            case LCDTiming2: v = timing2; break;
+            case LCDTiming3: v = timing3; break;
+            case LCDUPBASE:  v = upbase;  break;
+            case LCDLPBASE:  v = lpbase;  break;
+            case LCDControl: v = control; break;
+            case LCDIMSC:    v = imsc;    break;
+            case LCDRIS:     v = ris;     break;
+            case LCDMIS:     v = ris & imsc; break;
+            case LCDICR:     v = 0; break;                // write-only
+            case LCDUPCURR:  v = upbase;  break;
+            case LCDLPCURR:  v = lpbase;  break;
+            case PERIPH_ID0: v = 0x11; break;
+            case PERIPH_ID1: v = 0x11; break;
+            case PERIPH_ID2: v = 0x04; break;
+            case PERIPH_ID3: v = 0x00; break;
+            case PCELL_ID0:  v = 0x0D; break;
+            case PCELL_ID1:  v = 0xF0; break;
+            case PCELL_ID2:  v = 0x05; break;
+            case PCELL_ID3:  v = 0xB1; break;
+            default: v = 0;
+        }
+        if (width == 2) v = (v >> ((addr & 2) * 8)) & 0xFFFF;
+        else if (width == 1) v = (v >> ((addr & 3) * 8)) & 0xFF;
+        return v;
+    }
+
+    void write(uint32_t addr, uint32_t v, int width) {
+        (void)width;
+        uint32_t off = addr - base;
+        switch (off & ~3u) {
+            case LCDTiming0: timing0 = v; break;
+            case LCDTiming1: timing1 = v; break;
+            case LCDTiming2: timing2 = v; break;
+            case LCDTiming3: timing3 = v; break;
+            case LCDUPBASE:  upbase  = v & 0xFFFFFFF0u; break;
+            case LCDLPBASE:  lpbase  = v & 0xFFFFFFF0u; break;
+            case LCDControl:
+                control = v;
+                if (v & CNTL_LCDEN) {
+                    // Включение LCD: попытаться инициализировать терминал
+                    if (!nc_ready && !ansi_only) init_term();
+                    render();
+                }
+                break;
+            case LCDIMSC:    imsc = v & 0xF; break;
+            case LCDICR:     icr = v; ris &= ~v; break;
+            default: break;
+        }
+    }
+
+    // ----- Обновление разрешения из Timing-регистров -----
+    void sync_resolution() {
+        // PL111: LPP = [9:0] timing1, HBP/HSW/HFP = timing0
+        // Упрощённо: 320x240 (можно расширить)
+        int lpp = (timing1 & 0x3FF) + 1;
+        if (lpp > 4 && lpp < 4096) height = lpp;
+    }
+
+    // ----- Рендеринг -----
+    // Читает framebuffer из arm4_mem[upbase] и отображает через notcurses
+    void render() {
+        if (!(control & CNTL_LCDEN)) return;
+        if (!arm4_mem) return;
+
+        sync_resolution();
+
+        // Определить bpp
+        int bpp = 0;
+        uint32_t bpp_field = (control >> 1) & 0x7;
+        switch (bpp_field) {
+            case 0: bpp = 1; break;
+            case 1: bpp = 2; break;
+            case 2: bpp = 4; break;
+            case 3: bpp = 8; break;
+            case 4: bpp = 16; break;
+            case 5: bpp = 24; break;
+            case 6: bpp = 32; break;
+            default: bpp = 16;
+        }
+
+        size_t row_bytes = (size_t)width * bpp / 8;
+        if (upbase + row_bytes * height > arm4_mem_size) return;
+
+        // Проверка изменений (грубый хеш первых 512 байт)
+        uint32_t h = 0;
+        for (int i = 0; i < 512 && (upbase + i) < arm4_mem_size; i++)
+            h = h * 31 + arm4_mem[upbase + i];
+        if (h == last_hash) { frames_skipped++; return; }
+        last_hash = h;
+
+#ifdef HAVE_NOTCURSES
+        if (nc_ready) {
+            ncplane_erase(plane);
+            render_notcurses(bpp, row_bytes);
+            notcurses_render(nc);
+            renders++;
+            return;
+        }
+#endif
+        render_ansi(bpp, row_bytes);
+        renders++;
+    }
+
+    // ---- notcurses-рендер: пиксели -> символы + 24-бит цвет ----
+    void render_notcurses(int bpp, size_t row_bytes) {
+#ifdef HAVE_NOTCURSES
+        static const char lum[] = " .:-=+*#%@";
+        int cols = term_cols;
+        int rows = term_rows;
+
+        for (int ty = 0; ty < rows; ty++) {
+            for (int tx = 0; tx < cols; tx++) {
+                int px = tx * width / cols;
+                int py = ty * height / rows;
+                uint32_t rgb = sample_pixel(px, py, bpp, row_bytes);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                int lum_v = (299 * r + 587 * g + 114 * b) / 1000;
+                int idx = lum_v * 9 / 255;
+                char c = lum[idx];
+
+                uint64_t fg = (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
+                ncplane_set_fg_rgb(plane, (uint32_t)fg);
+                ncplane_putchar_yx(plane, ty, tx, c);
+            }
+        }
+#else
+        (void)bpp; (void)row_bytes;
+#endif
+    }
+
+    // ---- ANSI fallback: пиксели -> ASCII с 8-цветным фоном ----
+    void render_ansi(int bpp, size_t row_bytes) {
+        static const char lum[] = " .:-=+*#%@";
+        int cols = term_cols;
+        int rows = term_rows;
+
+        if (!ansi_clear_done) {
+            std::printf("\033[2J");  // clear screen
+            ansi_clear_done = true;
+        }
+
+        std::string out = "\033[H";  // cursor home
+        for (int ty = 0; ty < rows; ty++) {
+            for (int tx = 0; tx < cols; tx++) {
+                int px = tx * width / cols;
+                int py = ty * height / rows;
+                uint32_t rgb = sample_pixel(px, py, bpp, row_bytes);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                int lum_v = (299 * r + 587 * g + 114 * b) / 1000;
+                int idx = lum_v * 9 / 255;
+                out += lum[idx];
+            }
+            out += "\r\n";
+        }
+        std::fwrite(out.data(), 1, out.size(), stdout);
+        std::fflush(stdout);
+    }
+
+    // ---- Выборка пикселя из framebuffer ----
+    uint32_t sample_pixel(int px, int py, int bpp, size_t row_bytes) {
+        if (px < 0 || px >= width || py < 0 || py >= height) return 0;
+        size_t off = upbase + (size_t)py * row_bytes + (size_t)px * bpp / 8;
+        if (off + 4 > arm4_mem_size) return 0;
+
+        switch (bpp) {
+            case 16: {
+                uint16_t v; std::memcpy(&v, arm4_mem + off, 2);
+                int r = ((v >> 11) & 0x1F) * 255 / 31;
+                int g = ((v >> 5)  & 0x3F) * 255 / 63;
+                int b = ( v        & 0x1F) * 255 / 31;
+                return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+            }
+            case 24: {
+                uint8_t r = arm4_mem[off + 0];
+                uint8_t g = arm4_mem[off + 1];
+                uint8_t b = arm4_mem[off + 2];
+                if (control & CNTL_BGR) std::swap(r, b);
+                return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+            }
+            case 32: {
+                uint32_t v; std::memcpy(&v, arm4_mem + off, 4);
+                return v & 0xFFFFFF;
+            }
+            case 8: {
+                uint8_t v = arm4_mem[off];
+                int r = v & 0xE0, g = (v & 0x1C) << 3, b = (v & 0x03) << 6;
+                return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+            }
+            default: return 0;
+        }
+    }
+
+    // ----- IRQ vsync -----
+    bool irq_pending() const { return (ris & imsc) != 0; }
+    void vsync() { ris |= 1; }   // бит 0 = vertical compare
+    void tick()  { /* опционально: эмуляция vsync каждые N тиков */ }
+
+    void dump() const {
+        std::fprintf(stderr, "--- PL111 LCD @ 0x%08X (%s) ---\n", base, name);
+        int _bpp = 16;
+        switch ((control >> 1) & 0x7) {
+            case 0: _bpp = 1; break; case 1: _bpp = 2; break;
+            case 2: _bpp = 4; break; case 3: _bpp = 8; break;
+            case 4: _bpp = 16; break; case 5: _bpp = 24; break;
+            case 6: _bpp = 32; break; default: _bpp = 16;
+        }
+        std::fprintf(stderr, "  Enabled=%d  BPP=%d  Size=%dx%d  UPBASE=0x%08X  LPBASE=0x%08X\n",
+                    (int)((control & CNTL_LCDEN) != 0), _bpp, width, height, upbase, lpbase);
+        std::printf("  UPBASE=0x%08X  LPBASE=0x%08X\n", upbase, lpbase);
+        std::fprintf(stderr, "  IMSC=0x%X RIS=0x%X MIS=0x%X\n", imsc, ris, ris & imsc);
+        std::printf("  Timing0=0x%08X Timing1=0x%08X\n", timing0, timing1);
+        std::fprintf(stderr, "  Renders=%llu  Skipped=%llu  Term=%dx%d\n",
+                    (unsigned long long)renders,
+                    (unsigned long long)frames_skipped,
+                    term_cols, term_rows);
+#ifdef HAVE_NOTCURSES
+        std::fprintf(stderr, "  Backend=%s\n", nc_ready ? "notcurses" : "ANSI");
+#else
+        std::fprintf(stderr, "  Backend=ANSI\n");
+#endif
+    }
+};
+
+#endif // ARM4_VIRTLCD_H
