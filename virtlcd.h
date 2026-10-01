@@ -182,7 +182,11 @@ public:
         (void)width_v;
         uint32_t off = addr - base;
         switch (off & ~3u) {
-            case LCDTiming0: timing0 = v; break;
+            case LCDTiming0:
+                timing0 = v;
+                width  = (int)((v & 0xFFu) + 1);
+                height = (int)(((v >> 16) & 0x3FFu) + 1);
+                break;
             case LCDTiming1: timing1 = v; break;
             case LCDTiming2: timing2 = v; break;
             case LCDTiming3: timing3 = v; break;
@@ -313,7 +317,7 @@ public:
 
         std::string out;
         out.reserve(cols * out_rows * 32);
-        out += "\033[H";                  // курсор домой
+        out += "\033[2J\033[H";          // очистка + курсор домой
         char buf[96];
 
         for (int ty = 0; ty < out_rows; ty++) {
@@ -364,7 +368,7 @@ public:
         int rows = term_rows - 1;
         if (rows < 4) rows = term_rows;
 
-        std::string out = "\033[H";
+        std::string out = "\033[2J\033[H";
         for (int ty = 0; ty < rows; ty++) {
             int y0 = ty * height / rows;
             int y1 = (ty + 1) * height / rows;

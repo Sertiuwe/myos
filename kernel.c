@@ -13,6 +13,7 @@
 #include "eth.h"
 #include "net.h"
 #include "lcd.h"
+#include "video.h"
 
 extern char _end;
 
@@ -735,20 +736,36 @@ void kernel_main(void) {
     puts("  filesystem ready\n");
 
     puts("Init LCD (320x240 RGB565)...\n");
-    lcd_init(320, 240, 0x00200000);
+    lcd_init(160, 120, 0x00200000);
 
     lcd_clear(LCD_BLACK);
     {
-        int bar_h = 240 / 6;
-        lcd_fill_rect(  0, 0*bar_h, 320, bar_h, LCD_RED);
-        lcd_fill_rect(  0, 1*bar_h, 320, bar_h, LCD_YELLOW);
-        lcd_fill_rect(  0, 2*bar_h, 320, bar_h, LCD_GREEN);
-        lcd_fill_rect(  0, 3*bar_h, 320, bar_h, LCD_CYAN);
-        lcd_fill_rect(  0, 4*bar_h, 320, bar_h, LCD_BLUE);
-        lcd_fill_rect(  0, 5*bar_h, 320, bar_h, LCD_MAGENTA);
+        int bar_h = 120 / 6;
+        lcd_fill_rect(  0, 0*bar_h, 160, bar_h, LCD_RED);
+        lcd_fill_rect(  0, 1*bar_h, 160, bar_h, LCD_YELLOW);
+        lcd_fill_rect(  0, 2*bar_h, 160, bar_h, LCD_GREEN);
+        lcd_fill_rect(  0, 3*bar_h, 160, bar_h, LCD_CYAN);
+        lcd_fill_rect(  0, 4*bar_h, 160, bar_h, LCD_BLUE);
+        lcd_fill_rect(  0, 5*bar_h, 160, bar_h, LCD_MAGENTA);
     }
     lcd_enable();
     puts("  LCD ready\n");
+
+    puts("Init video player...\n");
+    {
+        video_t vid;
+        int r = video_load(2000, &vid);
+        if (r == 0) {
+            puts("  MV01: ");
+            putuint(vid.width); puts("x"); putuint(vid.height);
+            puts(", "); putuint(vid.frames); puts(" frames\n");
+            lcd_clear(LCD_BLACK);
+            video_play(&vid);
+            puts("  video done\n");
+        } else {
+            puts("  no video on SD (err="); putuint(-r); puts(")\n");
+        }
+    }
 
     puts("Creating tasks...\n");
     task_create(0, task_terminal, "term");
