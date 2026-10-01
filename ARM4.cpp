@@ -2717,12 +2717,63 @@ int main(int argc, char** argv) {
             std::printf("[MEM] 0x%08X <- 0x%08X\n", addr & ~3u, val);
             return false;
         }
+        if (std::strcmp(cmd, "sdload") == 0) {
+            char s_lba[32] = {0}, s_cnt[32] = {0}, s_addr[32] = {0};
+            std::sscanf(line_str.c_str(), "%*s %31s %31s %31s", s_lba, s_cnt, s_addr);
+            if (!s_lba[0] || !s_cnt[0] || !s_addr[0]) {
+                std::printf("Использование: sdload <lba> <count> <vmcu_addr>\n");
+                return false;
+            }
+            uint32_t lba   = parse_u32(s_lba);
+            uint32_t count = parse_u32(s_cnt);
+            uint32_t addr  = parse_u32(s_addr);
+
+            if (!emu.sd.present) {
+                std::printf("[SD] SD не активна\n");
+                return false;
+            }
+            if (count == 0 || count > 1024) {
+                std::printf("[SD] count должен быть 1..1024\n");
+                return false;
+            }
+
+            for (uint32_t b = 0; b < count; b++) {
+                emu.sd.lba = lba + b;
+                emu.sd.write(emu.sd.base + VirtSD::SD_CMD, VirtSD::CMD_READ, 4);
+                if (emu.sd.error) {
+                    std::printf("[SD] Ошибка чтения блока %u (err=%u)\n",
+                                lba + b, emu.sd.error);
+                    return false;
+                }
+                uint32_t dst = (addr + b * VirtSD::BLOCK_SIZE) & 0xFFFFu;
+                for (uint32_t i = 0; i < VirtSD::BLOCK_SIZE; i++) {
+                    emu.vmcu.mem_write8((dst + i) & 0xFFFFu, emu.sd.block_buf[i]);
+                }
+            }
+            std::printf("[SD] Загружено %u блок(ов) с LBA %u -> VMCU:0x%04X\n",
+                        count, lba, addr);
+            return false;
+        }
+
         if (std::strcmp(cmd, "mem") == 0) {
             uint32_t addr = arg1[0] ? parse_u32(arg1) : 0;
             int words = arg2[0] ? std::atoi(arg2) : 16;
             dump_mem(emu, addr, words);
             return false;
         }
+        if (std::strcmp(cmd, "vmem") == 0) {
+            uint32_t addr = arg1[0] ? parse_u32(arg1) : 0;
+            int words = arg2[0] ? std::atoi(arg2) : 16;
+            addr &= (VMCU::MEM_SIZE - 1);
+            std::printf("--- VMCU память 0x%04X ---\n", addr);
+            for (int i = 0; i < words; i++) {
+                uint32_t a = (addr + i * 4) & (VMCU::MEM_SIZE - 1);
+                uint32_t v = emu.vmcu.mem_read32(a);
+                std::printf("  [0x%04X] = 0x%08X\n", a, v);
+            }
+            return false;
+        }
+
         if (std::strcmp(cmd, "reset") == 0) {
             emu = Emulator();
             emu.rebind();
