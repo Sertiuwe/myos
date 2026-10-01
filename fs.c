@@ -149,13 +149,25 @@ int fs_sync_to_disk(void) {
 
 void fs_init(void) {
     printf("[FS] init start\n");
-    fs_format();
-    printf("[FS] format done, free_entries=%u\n", fs_free_entries());
+
+    int loaded = -1;
     if (sd_present()) {
-        fs_sync_to_disk();
-        printf("[FS] sync done\n");
+        loaded = fs_load_from_disk();
+        if (loaded == 0)
+            printf("[FS] mounted existing filesystem\n");
+        else
+            printf("[FS] no valid FS on disk (err=%d), formatting...\n", loaded);
     }
-    printf("[FS] init complete\n");
+
+    if (loaded != 0) {
+        fs_format();
+        if (sd_present()) {
+            fs_sync_to_disk();
+            printf("[FS] sync done\n");
+        }
+    }
+
+    printf("[FS] init complete, free_entries=%u\n", fs_free_entries());
 }
 
 /* ============================================================
