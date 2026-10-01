@@ -22,6 +22,8 @@
 #include "vmcu.h"
 #include "virtlcd.h"
 #include "virtsd.h"
+#include "virtwdog.h"
+#include "virtrtc.h"
 #include "mmu.h"
 #include "virteth.h"
 
@@ -1108,6 +1110,8 @@ public:
     VMCU       vmcu{0x10110000, "VMCU"};
     VirtLCD    lcd {0x10120000, "LCD"};
     VirtSD     sd  {0x10100000, "SD"};
+    VirtRTC    rtc {0x10130000, "RTC"};
+    VirtWatchdog wdog{0x101E4000, "WDOG"};
     CP15       cp15;
     MMU        mmu;
 
@@ -1313,6 +1317,8 @@ public:
         eth.tick();
         vmcu.tick();
         lcd.tick();
+        rtc.tick();
+        wdog.tick();
         vic.set_source(16, vmcu.irq_pending());
         vic.set_source(17, lcd.irq_pending());
 
@@ -2139,6 +2145,8 @@ uint32_t Memory::read32(uint32_t a) {
         if (emu->vmcu.contains(a))   return emu->vmcu.read(a, 4);
         if (emu->lcd.contains(a))    return emu->lcd.read(a, 4);
         if (emu->sd.contains(a))    return emu->sd.read(a, 4);
+        if (emu->rtc.contains(a))    return emu->rtc.read(a, 4);
+        if (emu->wdog.contains(a))    return emu->wdog.read(a, 4);
     }
     if (!valid32(a)) { flag_fault(a, false); return 0; }
     // shared ARM4<->VMCU регион 0x70000-0x70FFF — без кеша
@@ -2170,6 +2178,8 @@ uint16_t Memory::read16(uint32_t a) {
         if (emu->vmcu.contains(a))   return (uint16_t)emu->vmcu.read(a, 2);
         if (emu->lcd.contains(a))    return (uint16_t)emu->lcd.read(a, 2);
         if (emu->sd.contains(a))    return (uint16_t)emu->sd.read(a, 2);
+        if (emu->rtc.contains(a))    return (uint16_t)emu->rtc.read(a, 2);
+        if (emu->wdog.contains(a))    return (uint16_t)emu->wdog.read(a, 2);
     }
     if (!valid16(a)) { flag_fault(a, false); return 0; }
     if (a >= 0x70000 && a < 0x71000) {
@@ -2225,6 +2235,8 @@ uint8_t Memory::read8(uint32_t a) {
         if (emu->vmcu.contains(a))   return (uint8_t)emu->vmcu.read(a, 1);
         if (emu->lcd.contains(a))    return (uint8_t)emu->lcd.read(a, 1);
         if (emu->sd.contains(a))    return (uint8_t)emu->sd.read(a, 1);
+        if (emu->rtc.contains(a))    return (uint8_t)emu->rtc.read(a, 1);
+        if (emu->wdog.contains(a))    return (uint8_t)emu->wdog.read(a, 1);
     }
     if (!valid8(a)) { flag_fault(a, false); return 0; }
     if (a >= 0x70000 && a < 0x71000) return data[a];
@@ -2252,6 +2264,8 @@ void Memory::write32(uint32_t a, uint32_t v) {
         if (emu->vmcu.contains(a))   { emu->vmcu.write(a, v, 4); return; }
         if (emu->lcd.contains(a))    { emu->lcd.write(a, v, 4); return; }
         if (emu->sd.contains(a))    { emu->sd.write(a, v, 4); return; }
+        if (emu->rtc.contains(a))    { emu->rtc.write(a, v, 4); return; }
+        if (emu->wdog.contains(a))    { emu->wdog.write(a, v, 4); return; }
     }
     if (!valid32(a)) { flag_fault(a, true); return; }
     if (a >= 0x70000 && a < 0x71000) {
@@ -2281,6 +2295,8 @@ void Memory::write16(uint32_t a, uint16_t v) {
         if (emu->vmcu.contains(a))   { emu->vmcu.write(a, v, 2); return; }
         if (emu->lcd.contains(a))    { emu->lcd.write(a, v, 2); return; }
         if (emu->sd.contains(a))    { emu->sd.write(a, v, 2); return; }
+        if (emu->rtc.contains(a))    { emu->rtc.write(a, v, 2); return; }
+        if (emu->wdog.contains(a))    { emu->wdog.write(a, v, 2); return; }
     }
     if (!valid16(a)) { flag_fault(a, true); return; }
     if (a >= 0x70000 && a < 0x71000) {
@@ -2310,6 +2326,8 @@ void Memory::write8(uint32_t a, uint8_t v) {
         if (emu->vmcu.contains(a))   { emu->vmcu.write(a, v, 1); return; }
         if (emu->lcd.contains(a))    { emu->lcd.write(a, v, 1); return; }
         if (emu->sd.contains(a))    { emu->sd.write(a, v, 1); return; }
+        if (emu->rtc.contains(a))    { emu->rtc.write(a, v, 1); return; }
+        if (emu->wdog.contains(a))    { emu->wdog.write(a, v, 1); return; }
     }
     if (!valid8(a)) { flag_fault(a, true); return; }
     if (a >= 0x70000 && a < 0x71000) { data[a] = v; return; }
@@ -2349,6 +2367,27 @@ static void print_help() {
     std::printf("  history / strict / autoload on|off\n");
     std::printf("\n  help / exit\n\n");
 }
+static void dump_rtc(Emulator& emu) {
+    std::printf("--- PL031 RTC @ 0x%08X (%s) ---\n", emu.rtc.base, emu.rtc.name);
+    std::time_t t = (std::time_t)emu.rtc.now();
+    char buf[64]; std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::gmtime(&t));
+    std::printf("  Time    = 0x%08X (%s UTC)\n", emu.rtc.now(), buf);
+    std::printf("  Match   = 0x%08X\n", emu.rtc.match);
+    std::printf("  Enabled = %d\n", emu.rtc.enabled ? 1 : 0);
+    std::printf("  IMSC    = 0x%08X  RIS = 0x%08X\n\n", emu.rtc.imsc, emu.rtc.ris);
+}
+
+static void dump_wdog(Emulator& emu) {
+    std::printf("--- SP805 Watchdog @ 0x%08X (%s) ---\n", emu.wdog.base, emu.wdog.name);
+    std::printf("  LOAD    = 0x%08X\n", emu.wdog.load);
+    std::printf("  VALUE   = 0x%08X\n", emu.wdog.value);
+    std::printf("  CONTROL = %s%s\n",
+                emu.wdog.int_en ? "INTEN " : "",
+                emu.wdog.res_en ? "RESEN" : "");
+    std::printf("  LOCKED  = %d\n", emu.wdog.locked ? 1 : 0);
+    std::printf("  RIS     = 0x%08X  FIRED = %u\n\n", emu.wdog.ris, emu.wdog.fired_count);
+}
+
 static void print_regs(Emulator& emu) {
     std::printf("--- CPU ---\n");
     for (int i = 0; i < 16; i++) {
@@ -3822,6 +3861,8 @@ int main(int argc, char** argv) {
             emu.gpio0.dump(); emu.gpio1.dump();
             return false;
         }
+        if (std::strcmp(cmd, "rtc") == 0) { dump_rtc(emu); return false; }
+        if (std::strcmp(cmd, "wdog") == 0 || std::strcmp(cmd, "watchdog") == 0) { dump_wdog(emu); return false; }
         if (std::strcmp(cmd, "vic") == 0) {
             emu.vic.dump();
             return false;
