@@ -4,6 +4,8 @@
 #include "memory.h"
 #include "memmap.h"
 #include "kstring.h"
+#include "kstdio.h"
+#include "gfx.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -42,7 +44,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help clear heap mem echo <t> alloc <n> free <i> slots history reboot\n");
+    con_puts("commands: help clear heap mem sysinfo echo <t> alloc <n> free <i> slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -70,6 +72,19 @@ static void cmd_slots(void) {
     }
 }
 
+static void cmd_sysinfo(void) {
+    kheap_stats_t st;
+    kheap_get_stats(&st);
+    kprintf("ram usable  : %u MiB (%u entries)\n",
+            (unsigned)(memmap_usable() / (1024 * 1024)), memmap_count());
+    kprintf("heap        : used=%u free=%u live=%u peak=%u\n",
+            (unsigned)st.used_bytes, (unsigned)st.free_bytes,
+            st.live_blocks, (unsigned)st.peak_used);
+    kprintf("framebuffer : %ux%u @ %p\n",
+            gfx_width(), gfx_height(), gfx_backbuffer());
+    kprintf("libk        : kprintf/kstring/kstdlib/kpanic online\n");
+}
+
 static void dispatch(char *cmd) {
     hist_add(cmd);
     char *sp = strchr(cmd, ' ');
@@ -84,6 +99,7 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "alloc")) cmd_alloc(arg);
     else if (!strcmp(cmd, "free")) cmd_free(arg);
     else if (!strcmp(cmd, "slots")) cmd_slots();
+    else if (!strcmp(cmd, "sysinfo")) cmd_sysinfo();
     else if (!strcmp(cmd, "history")) {
         for (size_t i = 0; i < hlen; i++) {
             con_put_u((uint64_t)i); con_puts(": "); con_puts(hist[i]); con_puts("\n");

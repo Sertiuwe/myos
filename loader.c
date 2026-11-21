@@ -5,6 +5,7 @@
 #include "con.h"
 #include "memmap.h"
 #include "shell.h"
+#include "kstdio.h"
 
 struct boot_info {
     uint64_t fb_addr;
@@ -239,6 +240,12 @@ static void klog(const char *s) {
 }
 
 __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo) {
+    /* Обнуляем .bss ПЕРВЫМ делом. Без этого после warm-reset (reboot)
+       в глобалках остаются stale-указатели прошлого запуска, и kfree
+       ловит double free на ещё-свободном блоке. */
+    extern char __bss_start[], __bss_end[];
+    memset(__bss_start, 0, (size_t)(__bss_end - __bss_start));
+
     fb_addr = binfo->fb_addr;
     fb_width = binfo->fb_width;
     fb_height = binfo->fb_height;
@@ -301,6 +308,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     }
 
     con_init(10, 300, fb_width - 10, fb_height - 10);
+    kstdio_set_sink(klog);
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();
