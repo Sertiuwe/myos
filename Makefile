@@ -1,36 +1,39 @@
-CC      = clang --target=arm-unknown-none-eabi
+CC      = clang
 LD      = ld.lld
-OBJCOPY = llvm-objcopy
+NASM    = nasm
+CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=small -O2 -mgeneral-regs-only -fno-asynchronous-unwind-tables
+LDFLAGS = -T linker.ld -nostdlib -static
 
-# Обычные флаги
-CFLAGS = -march=armv4t -marm -O1 -ffreestanding -fno-builtin -fno-common -fno-stack-protector -Wall -Wextra -Wno-unused-parameter
+all: os.img
 
-# Специальные флаги для fs.c — без оптимизации (иначе clang ломает записи в fs_entries)
-CFLAGS_FS = -march=armv4t -marm -O0 -ffreestanding -fno-builtin -fno-common -fno-stack-protector -Wall -Wextra -Wno-unused-parameter
+boot.bin: boot.asm
+	$(NASM) -f bin boot.asm -o boot.bin
 
-OBJS = boot.o kernel.o switch.o print.o memmap.o match.o panic.o selftest.o fs.o sdcard.o eth.o net.o lcd.o video.o libgcc_stubs.o
+stage2.bin: stage2.asm
+	$(NASM) -f bin stage2.asm -o stage2.bin
+	truncate -s 16384 stage2.bin
 
-all: myos.bin
+loader.o: loader.c memory.h
+	$(CC) $(CFLAGS) -c loader.c -o loader.o
 
-myos.elf: $(OBJS) linker.ld
-	$(LD) -T linker.ld -o $@ $(OBJS)
+memory.o: memory.c memory.h
+	$(CC) $(CFLAGS) -c memory.c -o memory.o
 
-myos.bin: myos.elf
-	$(OBJCOPY) -O binary $< $@
-	@ls -la $@
+kernel.elf: loader.o memory.o
+	$(LD) $(LDFLAGS) -o kernel.elf loader.o memory.o
 
-# fs.c — отдельное правило с -O0
-fs.o: fs.c fs.h
-	$(CC) $(CFLAGS_FS) -c fs.c -o fs.o
+kernel.bin: kernel.elf
+	objcopy -O binary kernel.elf kernel.bin
+	truncate -s 32768 kernel.bin
 
-# Все остальные .c
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+os.img: boot.bin stage2.bin kernel.bin
+	cat boot.bin stage2.bin kernel.bin > os.img
+	truncate -s 1474560 os.img
 
-%.o: %.s
-	$(CC) $(CFLAGS) -c $< -o $@
+run: os.img
+	qemu-system-x86_64 -drive file=os.img,format=raw -vnc :1 -display none -serial stdio
 
 clean:
-	rm -f $(OBJS) myos.elf myos.bin
+	rm -f *.o *.bin *.elf os.img
 
-.PHONY: all clean
+.PHONY: all clean run
