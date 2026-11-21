@@ -1,5 +1,10 @@
 #include <stdint.h>
 #include "memory.h"
+#include "kstring.h"
+#include "gfx.h"
+#include "con.h"
+#include "memmap.h"
+#include "shell.h"
 
 struct boot_info {
     uint64_t fb_addr;
@@ -15,24 +20,6 @@ static uint32_t *back_buffer;
 static uint32_t fb_bpp;
 static uint8_t *fb_bytes;
 
-void *memset(void *s, int c, uint32_t n) {
-    uint8_t *p = s;
-    while (n--) *p++ = (uint8_t)c;
-    return s;
-}
-
-void *memcpy(void *dest, const void *src, uint32_t n) {
-    uint8_t *d = dest;
-    const uint8_t *s = src;
-    while (n--) *d++ = *s++;
-    return dest;
-}
-
-uint32_t strlen(const char *s) {
-    uint32_t len = 0;
-    while (s[len]) len++;
-    return len;
-}
 
 void put_pixel(int x, int y, uint32_t color) {
     if (x < 0 || y < 0 || (uint32_t)x >= fb_width || (uint32_t)y >= fb_height) return;
@@ -203,6 +190,54 @@ static void serial_dec(uint32_t v) {
     while (i) serial_out(buf[--i]);
 }
 
+uint32_t *gfx_backbuffer(void) { return back_buffer; }
+uint32_t gfx_width(void) { return fb_width; }
+uint32_t gfx_height(void) { return fb_height; }
+void gfx_draw_char(char c, int x, int y, uint32_t col) { draw_char(c, x, y, col); }
+
+void gfx_flush_rows(uint32_t y0, uint32_t y1) {
+    if (y1 > fb_height) y1 = fb_height;
+    if (y0 >= y1) return;
+    // Копируем back_buffer в реальный фреймбуфер с учётом настоящей глубины цвета.
+    // pitch берём в БАЙТАХ, как его даёт VBE — никаких предположений про 4 байта.
+    for (uint32_t y = y0; y < y1; y++) {
+        uint8_t *row = fb_bytes + (uint64_t)y * fb_pitch;
+        const uint32_t *src = back_buffer + (uint64_t)y * fb_width;
+        for (uint32_t x = 0; x < fb_width; x++) {
+            uint32_t c = src[x];
+            uint8_t r = (uint8_t)((c >> 16) & 0xFF);
+            uint8_t g = (uint8_t)((c >> 8) & 0xFF);
+            uint8_t b = (uint8_t)(c & 0xFF);
+            if (fb_bpp == 32) {
+                row[x * 4 + 0] = b;
+                row[x * 4 + 1] = g;
+                row[x * 4 + 2] = r;
+                row[x * 4 + 3] = 0;
+            } else if (fb_bpp == 24) {
+                row[x * 3 + 0] = b;
+                row[x * 3 + 1] = g;
+                row[x * 3 + 2] = r;
+            } else if (fb_bpp == 16) {
+                uint16_t v = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+                row[x * 2 + 0] = (uint8_t)(v & 0xFF);
+                row[x * 2 + 1] = (uint8_t)(v >> 8);
+            } else if (fb_bpp == 15) {
+                uint16_t v = (uint16_t)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+                row[x * 2 + 0] = (uint8_t)(v & 0xFF);
+                row[x * 2 + 1] = (uint8_t)(v >> 8);
+            }
+        }
+    }
+}
+
+void gfx_flush(void) { gfx_flush_rows(0, fb_height); }
+
+
+static void klog(const char *s) {
+    serial_puts(s);
+    con_puts(s);
+}
+
 __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo) {
     fb_addr = binfo->fb_addr;
     fb_width = binfo->fb_width;
@@ -265,39 +300,21 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
         draw_string("Allocator FAILED!", 10, 190, 0xFF0000);
     }
 
+    con_init(10, 300, fb_width - 10, fb_height - 10);
+    kheap_set_reporter(klog);
+    memmap_load(binfo->e820_count);
+    memmap_dump();
+    kheap_selftest();
+    kheap_dump();
+    gfx_flush();
+
+    con_puts("\nType 'help' for commands.\n");
+    shell_run();
+
     draw_rect(10, 260, 300, 30, 0x007AFF);
     draw_string("Bootloader Ready.", 20, 268, 0xFFFFFF);
 
-    // Копируем back_buffer в реальный фреймбуфер с учётом настоящей глубины цвета.
-    // pitch берём в БАЙТАХ, как его даёт VBE — никаких предположений про 4 байта.
-    for (uint32_t y = 0; y < fb_height; y++) {
-        uint8_t *row = fb_bytes + (uint64_t)y * fb_pitch;
-        const uint32_t *src = back_buffer + (uint64_t)y * fb_width;
-        for (uint32_t x = 0; x < fb_width; x++) {
-            uint32_t c = src[x];
-            uint8_t r = (uint8_t)((c >> 16) & 0xFF);
-            uint8_t g = (uint8_t)((c >> 8) & 0xFF);
-            uint8_t b = (uint8_t)(c & 0xFF);
-            if (fb_bpp == 32) {
-                row[x * 4 + 0] = b;
-                row[x * 4 + 1] = g;
-                row[x * 4 + 2] = r;
-                row[x * 4 + 3] = 0;
-            } else if (fb_bpp == 24) {
-                row[x * 3 + 0] = b;
-                row[x * 3 + 1] = g;
-                row[x * 3 + 2] = r;
-            } else if (fb_bpp == 16) {
-                uint16_t v = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
-                row[x * 2 + 0] = (uint8_t)(v & 0xFF);
-                row[x * 2 + 1] = (uint8_t)(v >> 8);
-            } else if (fb_bpp == 15) {
-                uint16_t v = (uint16_t)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
-                row[x * 2 + 0] = (uint8_t)(v & 0xFF);
-                row[x * 2 + 1] = (uint8_t)(v >> 8);
-            }
-        }
-    }
+    gfx_flush();
 
     for (;;) __asm__ volatile ("hlt");
 }

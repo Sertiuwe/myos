@@ -4,7 +4,7 @@
 %define SERIAL 0x3F8
 %define KERNEL_SRC  0x20000
 %define KERNEL_DST  0x100000
-%define KERNEL_SIZE 32768
+%define KERNEL_SIZE 131072
 %define PML4_ADDR   0xA00000
 
 _start:

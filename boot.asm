@@ -11,27 +11,33 @@ _start:
     sti
     mov [boot_drive], dl
 
-    ; Маркер '1' в COM1
     mov dx, 0x3F8
     mov al, '1'
     out dx, al
 
-    ; Проверка LBA (EDD)
     mov ah, 0x41
     mov bx, 0x55AA
     mov dl, [boot_drive]
     int 0x13
     jc disk_error
 
-    ; stage2: 32 сектора, LBA 1 -> 0x0800:0x0000 (физ. 0x8000)
+    ; stage2: 32 сектора, LBA 1 -> 0x8000
     mov si, dap_stage2
     mov ah, 0x42
     mov dl, [boot_drive]
     int 0x13
     jc disk_error
 
-    ; kernel: 64 сектора, LBA 33 -> 0x2000:0x0000 (физ. 0x20000)
-    mov si, dap_kernel
+    ; kernel часть 1: 128 секторов, LBA 33 -> 0x20000
+    mov si, dap_k1
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc disk_error
+
+    ; kernel часть 2: 128 секторов, LBA 161 -> 0x30000
+    ; (делим на два чтения по 64 КБ, чтобы не пересекать DMA-границу)
+    mov si, dap_k2
     mov ah, 0x42
     mov dl, [boot_drive]
     int 0x13
@@ -64,18 +70,26 @@ boot_drive: db 0
 align 4
 dap_stage2:
     db 16, 0
-    dw 32          ; секторов
-    dw 0x0000      ; offset
-    dw 0x0800      ; segment -> 0x8000
-    dq 1           ; LBA start
+    dw 32
+    dw 0x0000
+    dw 0x0800
+    dq 1
 
 align 4
-dap_kernel:
+dap_k1:
     db 16, 0
-    dw 64
+    dw 128
     dw 0x0000
-    dw 0x2000      ; -> 0x20000
+    dw 0x2000
     dq 33
+
+align 4
+dap_k2:
+    db 16, 0
+    dw 128
+    dw 0x0000
+    dw 0x3000
+    dq 161
 
 times 510 - ($ - $$) db 0
 dw 0xAA55
