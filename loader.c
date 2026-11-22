@@ -10,6 +10,7 @@
 #include "ata.h"
 #include "rtc.h"
 #include "bcache.h"
+#include "myfs.h"
 
 struct boot_info {
     uint64_t fb_addr;
@@ -315,6 +316,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     kstdio_set_sink(klog);
     ata_init();
     bcache_init();
+    myfs_mount("ata1");
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();

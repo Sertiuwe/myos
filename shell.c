@@ -10,6 +10,7 @@
 #include "ata.h"
 #include "rtc.h"
 #include "bcache.h"
+#include "myfs.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -48,7 +49,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help clear heap mem sysinfo date atastat bcstat disk blk <d> <lba> [n] blktest [d] echo <t> alloc <n> free <i> slots history reboot\n");
+    con_puts("commands: help ls cat touch write rm clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -175,6 +176,64 @@ static void cmd_bcstat(void) {
     kprintf("bcache: hits=%u misses=%u dirty=%u bufs=%u\n", h, m, d, t);
 }
 
+static int resolve_path_shell(const char *path, uint16_t *ino, uint8_t *type) {
+    return myfs_resolve(path, ino, type);
+}
+
+static void cmd_ls(const char *arg) {
+    const char *path = arg[0] ? arg : "/";
+    uint16_t ino; uint8_t tp;
+    if (resolve_path_shell(path, &ino, &tp)) { kprintf("not found: %s\n", path); return; }
+    if (tp != 2) { kprintf("%s is not a directory\n", path); return; }
+    char name[256]; uint16_t ei; uint8_t et;
+    for (int i = 0; myfs_readdir(ino, i, name, sizeof name, &ei, &et) == 0; i++) {
+        kprintf("%s %s\n", et == 2 ? "DIR " : "FILE", name);
+    }
+}
+
+static void cmd_cat(const char *arg) {
+    uint16_t ino; uint8_t tp;
+    if (resolve_path_shell(arg, &ino, &tp)) { kprintf("not found: %s\n", arg); return; }
+    if (tp == 2) { kprintf("is a directory\n"); return; }
+    char buf[512];
+    int n;
+    uint32_t off = 0;
+    while ((n = myfs_read(ino, off, buf, sizeof buf - 1)) > 0) {
+        buf[n] = '\0';
+        con_puts(buf);
+        off += (uint32_t)n;
+    }
+    con_puts("\n");
+}
+
+static void cmd_touch(const char *arg) {
+    uint16_t ino;
+    if (myfs_create(arg, 0100644, &ino) == 0)
+        kprintf("created: %s (ino %u)\n", arg, ino);
+    else
+        kprintf("create failed: %s\n", arg);
+}
+
+static void cmd_write(const char *arg) {
+    char path[128]; const char *text;
+    const char *sp = strchr(arg, ' ');
+    if (!sp) { kprintf("usage: write <path> <text>\n"); return; }
+    size_t plen = (size_t)(sp - arg);
+    if (plen >= sizeof path) plen = sizeof path - 1;
+    memcpy(path, arg, plen); path[plen] = '\0';
+    text = sp + 1;
+    uint16_t ino; uint8_t tp;
+    if (resolve_path_shell(path, &ino, &tp)) { kprintf("not found: %s\n", path); return; }
+    int n = myfs_write(ino, 0, text, (uint32_t)strlen(text));
+    kprintf("wrote %d bytes to %s\n", n, path);
+}
+
+static void cmd_rm(const char *arg) {
+    if (myfs_unlink(arg) == 0) kprintf("removed: %s\n", arg);
+    else kprintf("unlink failed: %s\n", arg);
+}
+
+/* helper: обёртка над resolve_path для шелла */
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -204,6 +263,11 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "slots")) cmd_slots();
     else if (!strcmp(cmd, "date")) cmd_date();
     else if (!strcmp(cmd, "bcstat")) cmd_bcstat();
+    else if (!strcmp(cmd, "ls")) cmd_ls(arg);
+    else if (!strcmp(cmd, "cat")) cmd_cat(arg);
+    else if (!strcmp(cmd, "touch")) cmd_touch(arg);
+    else if (!strcmp(cmd, "write")) cmd_write(arg);
+    else if (!strcmp(cmd, "rm")) cmd_rm(arg);
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);
