@@ -50,7 +50,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help testfault uptime sleep <ms> ls cat touch write rm clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -181,6 +181,31 @@ static int resolve_path_shell(const char *path, uint16_t *ino, uint8_t *type) {
     return myfs_resolve(path, ino, type);
 }
 
+static int myfs_stat_full(uint16_t ino, myfs_inode_t *out) {
+    extern int myfs_read_inode_raw(uint16_t ino, myfs_inode_t *out);
+    return myfs_read_inode_raw(ino, out);
+}
+
+static void format_time(uint32_t unix_ts, char *buf) {
+    /* Простая конвертация unix timestamp → YYYY-MM-DD HH:MM */
+    uint32_t s = unix_ts;
+    uint32_t days = s / 86400; s %= 86400;
+    uint32_t hours = s / 3600; s %= 3600;
+    uint32_t mins = s / 60;
+    /* Упрощённая дата без високосных */
+    uint32_t y = 1970, m = 1, d = 1;
+    while (days >= 365) { days -= 365; y++; }
+    static const uint8_t mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    for (m = 1; m <= 12 && days >= mdays[m-1]; m++) days -= mdays[m-1];
+    d = days + 1;
+    buf[0]='0'+y/1000; buf[1]='0'+(y/100)%10; buf[2]='0'+(y/10)%10; buf[3]='0'+y%10;
+    buf[4]='-'; buf[5]='0'+m/10; buf[6]='0'+m%10;
+    buf[7]='-'; buf[8]='0'+d/10; buf[9]='0'+d%10;
+    buf[10]=' '; buf[11]='0'+hours/10; buf[12]='0'+hours%10;
+    buf[13]=':'; buf[14]='0'+mins/10; buf[15]='0'+mins%10;
+    buf[16]='\0';
+}
+
 static void cmd_ls(const char *arg) {
     const char *path = arg[0] ? arg : "/";
     uint16_t ino; uint8_t tp;
@@ -188,7 +213,14 @@ static void cmd_ls(const char *arg) {
     if (tp != 2) { kprintf("%s is not a directory\n", path); return; }
     char name[256]; uint16_t ei; uint8_t et;
     for (int i = 0; myfs_readdir(ino, i, name, sizeof name, &ei, &et) == 0; i++) {
-        kprintf("%s %s\n", et == 2 ? "DIR " : "FILE", name);
+        myfs_inode_t st;
+        if (myfs_stat_full(ei, &st) == 0) {
+            char tbuf[20]; format_time(st.mtime, tbuf);
+            kprintf("%s %8u %s %s\n", et == MYFS_TYPE_DIR ? "DIR " : "FILE",
+                    st.size, tbuf, name);
+        } else {
+            kprintf("%s %s\n", et == MYFS_TYPE_DIR ? "DIR " : "FILE", name);
+        }
     }
 }
 
@@ -297,6 +329,17 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "touch")) cmd_touch(arg);
     else if (!strcmp(cmd, "write")) cmd_write(arg);
     else if (!strcmp(cmd, "rm")) cmd_rm(arg);
+    else if (!strcmp(cmd, "mkdir")) {
+        uint16_t ino;
+        if (myfs_mkdir(arg, 0755, &ino) == 0) kprintf("mkdir: %s (ino %u)\n", arg, ino);
+        else kprintf("mkdir failed: %s\n", arg);
+    }
+    else if (!strcmp(cmd, "rename")) {
+        char *sp = strchr(arg, ' ');
+        if (!sp) { kprintf("usage: rename <old> <new>\n"); }
+        else { *sp = 0; if (myfs_rename(arg, sp+1)==0) kprintf("renamed\n"); else kprintf("rename failed\n"); }
+    }
+    else if (!strcmp(cmd, "sync")) { myfs_sync(); kprintf("synced\n"); }
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);

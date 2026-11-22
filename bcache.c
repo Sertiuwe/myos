@@ -85,8 +85,16 @@ int bcache_write(bdev_t *b, uint64_t lba, const void *buf) {
 }
 
 int bcache_flush(bdev_t *b) {
-    /* При write-through flush — no-op, но оставляем для будущего writeback */
-    (void)b;
+    /* Writeback: сбрасываем все dirty буферы для данного устройства */
+    for (unsigned h = 0; h < NBUCKETS; h++) {
+        for (buf_t *bp = buckets[h]; bp; bp = bp->next) {
+            if (bp->dev == b && bp->dirty && bp->valid) {
+                int rc = bdev_write(b, bp->lba, 1, bp->data);
+                if (rc) return rc;
+                bp->dirty = 0;
+            }
+        }
+    }
     return 0;
 }
 

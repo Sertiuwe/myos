@@ -288,6 +288,48 @@ int myfs_create(const char *path, uint32_t mode, uint16_t *out_ino) {
     return 0;
 }
 
+int myfs_mkdir(const char *path, uint32_t mode, uint16_t *out_ino) {
+    const char *last_slash = strrchr(path, '/');
+    char parent[256], name[256];
+    if (last_slash) {
+        size_t plen = (size_t)(last_slash - path);
+        if (plen == 0) plen = 1;
+        memcpy(parent, path, plen); parent[plen] = '\0';
+        strcpy(name, last_slash + 1);
+    } else {
+        strcpy(parent, "/"); strcpy(name, path);
+    }
+    if (name[0] == '\0') return -1;
+
+    uint16_t dir_ino; uint8_t dt;
+    if (resolve_path(parent, &dir_ino, &dt)) return -1;
+    if (dt != MYFS_TYPE_DIR) return -1;
+
+    uint16_t dummy;
+    if (dir_lookup(dir_ino, name, &dummy, NULL) == 0) return -1;
+
+    int ni = alloc_inode();
+    if (ni < 0) return -1;
+
+    int db = alloc_block();
+    if (db < 0) return -1;
+    uint8_t z[MYFS_BLK]; memset(z, 0, MYFS_BLK);
+    write_blk((uint64_t)db, z);
+
+    myfs_inode_t new_ino;
+    memset(&new_ino, 0, sizeof(new_ino));
+    new_ino.mode = mode | 0040000;
+    new_ino.size = 0;
+    new_ino.nblocks = 1;
+    new_ino.direct[0] = (uint16_t)db;
+    new_ino.mtime = now_unix();
+    write_inode((uint16_t)ni, &new_ino);
+
+    if (dir_add_entry(dir_ino, name, (uint16_t)ni, MYFS_TYPE_DIR)) return -1;
+    if (out_ino) *out_ino = (uint16_t)ni;
+    return 0;
+}
+
 int myfs_unlink(const char *path) {
     uint16_t ino; uint8_t tp;
     if (resolve_path(path, &ino, &tp)) return -1;
@@ -379,6 +421,94 @@ int myfs_mount(const char *devname) {
 }
 
 void myfs_umount(void) { mounted = 0; fs_dev = NULL; }
+int myfs_rename(const char *oldpath, const char *newpath) {
+    uint16_t old_ino; uint8_t old_type;
+    if (resolve_path(oldpath, &old_ino, &old_type)) return -1;
+
+    const char *last_slash = strrchr(newpath, '/');
+    char parent[256], name[256];
+    if (last_slash) {
+        size_t plen = (size_t)(last_slash - newpath);
+        if (plen == 0) plen = 1;
+        memcpy(parent, newpath, plen); parent[plen] = '\0';
+        strcpy(name, last_slash + 1);
+    } else {
+        strcpy(parent, "/"); strcpy(name, newpath);
+    }
+    if (name[0] == '\0') return -1;
+
+    uint16_t new_dir_ino; uint8_t ndt;
+    if (resolve_path(parent, &new_dir_ino, &ndt)) return -1;
+    if (ndt != MYFS_TYPE_DIR) return -1;
+
+    /* Если цель существует и это файл — удаляем */
+    uint16_t exist_ino; uint8_t et;
+    if (dir_lookup(new_dir_ino, name, &exist_ino, &et) == 0) {
+        if (et == MYFS_TYPE_DIR) return -1;
+        myfs_inode_t en; read_inode(exist_ino, &en);
+        for (int i = 0; i < MYFS_DIRECT && en.direct[i]; i++) free_block(en.direct[i]);
+        if (en.indirect) {
+            uint16_t tbl[MYFS_BLK/2]; read_blk(en.indirect, tbl);
+            for (int i = 0; i < MYFS_BLK/2 && tbl[i]; i++) free_block(tbl[i]);
+            free_block(en.indirect);
+        }
+        memset(&en, 0, sizeof(en)); write_inode(exist_ino, &en);
+        myfs_inode_t din; read_inode(new_dir_ino, &din);
+        uint32_t pos = 0;
+        while (pos < din.size) {
+            dirent_hdr_t hdr;
+            if (myfs_read(new_dir_ino, pos, &hdr, sizeof(hdr)) != (int)sizeof(hdr)) break;
+            if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+            char ename[256]; myfs_read(new_dir_ino, pos+sizeof(hdr), ename, hdr.namelen);
+            ename[hdr.namelen] = '\0';
+            if (strcmp(ename, name) == 0 && hdr.ino == exist_ino) {
+                hdr.namelen = 0; hdr.ino = 0;
+                myfs_write(new_dir_ino, pos, &hdr, sizeof(hdr)); break;
+            }
+            pos += sizeof(hdr) + hdr.namelen;
+        }
+    }
+
+    /* Удаляем из старого родителя */
+    const char *old_slash = strrchr(oldpath, '/');
+    char old_parent[256], old_name[256];
+    if (old_slash) {
+        size_t plen = (size_t)(old_slash - oldpath);
+        if (plen == 0) plen = 1;
+        memcpy(old_parent, oldpath, plen); old_parent[plen] = '\0';
+        strcpy(old_name, old_slash + 1);
+    } else {
+        strcpy(old_parent, "/"); strcpy(old_name, oldpath);
+    }
+    uint16_t old_dir_ino; resolve_path(old_parent, &old_dir_ino, NULL);
+    myfs_inode_t odin; read_inode(old_dir_ino, &odin);
+    uint32_t pos = 0;
+    while (pos < odin.size) {
+        dirent_hdr_t hdr;
+        if (myfs_read(old_dir_ino, pos, &hdr, sizeof(hdr)) != (int)sizeof(hdr)) break;
+        if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+        char ename[256]; myfs_read(old_dir_ino, pos+sizeof(hdr), ename, hdr.namelen);
+        ename[hdr.namelen] = '\0';
+        if (strcmp(ename, old_name) == 0 && hdr.ino == old_ino) {
+            hdr.namelen = 0; hdr.ino = 0;
+            myfs_write(old_dir_ino, pos, &hdr, sizeof(hdr)); break;
+        }
+        pos += sizeof(hdr) + hdr.namelen;
+    }
+
+    dir_add_entry(new_dir_ino, name, old_ino, old_type);
+    return 0;
+}
+
+void myfs_sync(void) {
+    if (!mounted || !fs_dev) return;
+    bcache_flush(fs_dev);
+}
+
+int myfs_read_inode_raw(uint16_t ino, myfs_inode_t *out) {
+    return read_inode(ino, out);
+}
+
 uint16_t myfs_root_ino(void) { return sb.root_ino; }
 
 int myfs_resolve(const char *path, uint16_t *ino, uint8_t *type) {
