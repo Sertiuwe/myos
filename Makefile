@@ -5,7 +5,7 @@ CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-pr
 LDFLAGS = -T linker.ld -nostdlib -static
 
 KZONE   = 131072
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o
 
 all: os.img
 
@@ -57,6 +57,12 @@ bdev.o: bdev.c bdev.h kstring.h
 
 ata.o: ata.c ata.h bdev.h kstdio.h
 	$(CC) $(CFLAGS) -c ata.c -o ata.o
+
+rtc.o: rtc.c rtc.h
+	$(CC) $(CFLAGS) -c rtc.c -o rtc.o
+
+bcache.o: bcache.c bcache.h bdev.h memory.h kstring.h
+	$(CC) $(CFLAGS) -c bcache.c -o bcache.o
 
 kernel.elf: $(OBJS) linker.ld
 	$(LD) $(LDFLAGS) -o kernel.elf $(OBJS)

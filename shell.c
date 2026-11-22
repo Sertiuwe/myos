@@ -8,6 +8,8 @@
 #include "gfx.h"
 #include "bdev.h"
 #include "ata.h"
+#include "rtc.h"
+#include "bcache.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -46,7 +48,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help clear heap mem sysinfo atastat disk blk <d> <lba> [n] blktest [d] echo <t> alloc <n> free <i> slots history reboot\n");
+    con_puts("commands: help clear heap mem sysinfo date atastat bcstat disk blk <d> <lba> [n] blktest [d] echo <t> alloc <n> free <i> slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -113,7 +115,10 @@ static void cmd_blk(const char *arg) {
     if (!b) { kprintf("no such disk: %s\n", name); return; }
     uint8_t *buf = (uint8_t *)kmalloc((size_t)cnt * 512);
     if (!buf) { kprintf("oom\n"); return; }
-    if (bdev_read(b, lba, cnt, buf)) { kprintf("read error\n"); kfree(buf); return; }
+    int rc = 0;
+    for (uint32_t s = 0; s < cnt && !rc; s++)
+        rc = bcache_read(b, lba + s, buf + (size_t)s * 512);
+    if (rc) { kprintf("read error\n"); kfree(buf); return; }
     for (uint32_t s = 0; s < cnt; s++) {
         kprintf("--- %s lba %u ---\n", name, (unsigned)(lba + s));
         hexdump(buf + (size_t)s * 512, 512);
@@ -128,8 +133,8 @@ static void cmd_blktest(const char *arg) {
     uint8_t *w = (uint8_t *)kmalloc(512), *r = (uint8_t *)kmalloc(512);
     if (!w || !r) { kprintf("oom\n"); goto done; }
     for (int i = 0; i < 512; i++) w[i] = (uint8_t)(i * 7 + 3);
-    if (bdev_write(b, BLKTEST_LBA, 1, w)) { kprintf("write error\n"); goto done; }
-    if (bdev_read(b, BLKTEST_LBA, 1, r)) { kprintf("read error\n"); goto done; }
+    if (bcache_write(b, BLKTEST_LBA, w)) { kprintf("write error\n"); goto done; }
+    if (bcache_read(b, BLKTEST_LBA, r)) { kprintf("read error\n"); goto done; }
     int ok = (memcmp(w, r, 512) == 0);
     kprintf("blktest %s lba %u: %s\n", b->name, BLKTEST_LBA, ok ? "PASS" : "FAIL");
 done:
@@ -154,6 +159,20 @@ static void cmd_atastat(void) {
                 ai.writes, (unsigned)(ai.bytes_written / 1024));
         kprintf("  errors: %u\n", ai.errors);
     }
+}
+
+static void cmd_date(void) {
+    rtc_time_t t;
+    if (rtc_read(&t) != 0) { kprintf("RTC read failed\n"); return; }
+    char buf[32];
+    rtc_format(&t, buf, sizeof buf);
+    kprintf("%s\n", buf);
+}
+
+static void cmd_bcstat(void) {
+    uint32_t h, m, d, t;
+    bcache_stats(&h, &m, &d, &t);
+    kprintf("bcache: hits=%u misses=%u dirty=%u bufs=%u\n", h, m, d, t);
 }
 
 static void cmd_sysinfo(void) {
@@ -183,6 +202,8 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "alloc")) cmd_alloc(arg);
     else if (!strcmp(cmd, "free")) cmd_free(arg);
     else if (!strcmp(cmd, "slots")) cmd_slots();
+    else if (!strcmp(cmd, "date")) cmd_date();
+    else if (!strcmp(cmd, "bcstat")) cmd_bcstat();
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);
