@@ -12,6 +12,8 @@
 #include "bcache.h"
 #include "myfs.h"
 #include "idt.h"
+#include "pit.h"
+#include "pic.h"
 
 struct boot_info {
     uint64_t fb_addr;
@@ -319,6 +321,12 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     bcache_init();
     myfs_mount("ata1");
     idt_init();
+    pic_init();
+    pit_init(100);
+    pic_unmask(0);
+    pic_unmask(1);
+    __asm__ volatile("sti");
+    kprintf("IRQ: enabled\n");
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();

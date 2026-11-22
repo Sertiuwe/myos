@@ -54,6 +54,8 @@ extern void isr_stub_29(void);
 extern void isr_stub_30(void);
 extern void isr_stub_31(void);
 extern void isr_stub_default(void);
+extern void isr_stub_32(void);
+extern void isr_stub_33(void);
 
 static const char *exc_names[] = {
     "#DE Divide Error",           "#DB Debug",              "#NMI NMI",
@@ -122,6 +124,10 @@ void idt_init(void) {
     };
     for (int i = 0; i < 32; i++)
         set_gate((uint8_t)i, stubs[i], 0);
+
+    /* IRQ handlers */
+    set_gate(32, isr_stub_32, 0);  /* IRQ0 → PIT */
+    set_gate(33, isr_stub_33, 0);  /* IRQ1 → keyboard */
 
     /* Load IDT */
     idtr_t idtr;

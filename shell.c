@@ -11,6 +11,7 @@
 #include "rtc.h"
 #include "bcache.h"
 #include "myfs.h"
+#include "pit.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -49,7 +50,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help testfault ls cat touch write rm clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help testfault uptime sleep <ms> ls cat touch write rm clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -242,6 +243,23 @@ static void cmd_testfault(void) {
     (void)z;
 }
 
+static void cmd_uptime(void) {
+    uint64_t t = pit_ticks();
+    uint32_t hz = pit_hz();
+    uint64_t sec = t / hz;
+    uint64_t ms = (t % hz) * 1000 / hz;
+    kprintf("uptime: %u.%03u s (%u ticks @ %u Hz)\n",
+            (unsigned)sec, (unsigned)ms, (unsigned)t, hz);
+}
+
+static void cmd_sleep(const char *arg) {
+    uint32_t ms = (uint32_t)parse_u(arg);
+    if (!ms) { kprintf("usage: sleep <ms>\n"); return; }
+    kprintf("sleeping %u ms...\n", ms);
+    pit_sleep_ms(ms);
+    kprintf("done\n");
+}
+
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -272,6 +290,8 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "date")) cmd_date();
     else if (!strcmp(cmd, "bcstat")) cmd_bcstat();
     else if (!strcmp(cmd, "testfault")) cmd_testfault();
+    else if (!strcmp(cmd, "uptime")) cmd_uptime();
+    else if (!strcmp(cmd, "sleep")) cmd_sleep(arg);
     else if (!strcmp(cmd, "ls")) cmd_ls(arg);
     else if (!strcmp(cmd, "cat")) cmd_cat(arg);
     else if (!strcmp(cmd, "touch")) cmd_touch(arg);

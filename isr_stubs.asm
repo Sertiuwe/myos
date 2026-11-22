@@ -1,13 +1,14 @@
 [bits 64]
 
 extern exception_handler
+extern irq_handler
 
-common_handler:
-    mov rdi, [rsp + 120]   ; vector number
-    mov rsi, [rsp + 128]   ; error code
-    mov rdx, [rsp + 136]   ; RIP
-    mov rcx, [rsp + 160]   ; original RSP
-    mov r8,  [rsp + 48]    ; RBP
+common_exception:
+    mov rdi, [rsp + 120]
+    mov rsi, [rsp + 128]
+    mov rdx, [rsp + 136]
+    mov rcx, [rsp + 160]
+    mov r8,  [rsp + 48]
     mov r9, 0
     cmp rdi, 14
     jne .no_cr2
@@ -18,6 +19,31 @@ common_handler:
     cli
     hlt
     jmp $
+
+%macro POP_REGS 0
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+common_irq:
+    mov rdi, [rsp + 120]
+    call irq_handler
+    POP_REGS
+    add rsp, 16             ; skip error_code + vector
+    iretq
 
 %macro PUSH_REGS 0
     push rax
@@ -43,7 +69,7 @@ isr_stub_%1:
     push qword 0
     push qword %1
     PUSH_REGS
-    jmp common_handler
+    jmp common_exception
 %endmacro
 
 %macro ISR_ERR 1
@@ -51,7 +77,16 @@ global isr_stub_%1
 isr_stub_%1:
     push qword %1
     PUSH_REGS
-    jmp common_handler
+    jmp common_exception
+%endmacro
+
+%macro IRQ_STUB 1
+global isr_stub_%1
+isr_stub_%1:
+    push qword 0
+    push qword %1
+    PUSH_REGS
+    jmp common_irq
 %endmacro
 
 ISR_NOERR 0
@@ -87,9 +122,12 @@ ISR_NOERR 29
 ISR_NOERR 30
 ISR_NOERR 31
 
+IRQ_STUB 32
+IRQ_STUB 33
+
 global isr_stub_default
 isr_stub_default:
     push qword 0
     push qword 0xFF
     PUSH_REGS
-    jmp common_handler
+    jmp common_exception
