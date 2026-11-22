@@ -12,6 +12,7 @@
 #include "bcache.h"
 #include "myfs.h"
 #include "idt.h"
+#include "pci.h"
 #include "pit.h"
 #include "pic.h"
 
@@ -327,6 +328,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     pic_unmask(1);
     __asm__ volatile("sti");
     kprintf("IRQ: enabled\n");
+    pci_init();
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();

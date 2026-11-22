@@ -12,6 +12,7 @@
 #include "bcache.h"
 #include "myfs.h"
 #include "pit.h"
+#include "pci.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -50,7 +51,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -292,6 +293,24 @@ static void cmd_sleep(const char *arg) {
     kprintf("done\n");
 }
 
+static void cmd_lspci(void) {
+    int n = pci_count();
+    if (!n) { kprintf("no PCI devices\n"); return; }
+    for (int i = 0; i < n; i++) {
+        const pci_device_t *d = pci_get(i);
+        if (!d || !d->present) continue;
+        kprintf("%02x:%02x.%x %04x:%04x class=%02x:%02x hdr=%x irq=%u",
+                d->bus, d->dev, d->func, d->vendor_id, d->device_id,
+                d->class_code, d->subclass, d->header_type, d->irq_line);
+        if (d->header_type == 0) {
+            kprintf("\n  BAR: ");
+            for (int b = 0; b < 6; b++)
+                if (d->bar[b]) kprintf("[%d]=0x%x ", b, d->bar[b]);
+        }
+        kprintf("\n");
+    }
+}
+
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -340,6 +359,7 @@ static void dispatch(char *cmd) {
         else { *sp = 0; if (myfs_rename(arg, sp+1)==0) kprintf("renamed\n"); else kprintf("rename failed\n"); }
     }
     else if (!strcmp(cmd, "sync")) { myfs_sync(); kprintf("synced\n"); }
+    else if (!strcmp(cmd, "lspci")) cmd_lspci();
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);
