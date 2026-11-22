@@ -7,6 +7,7 @@
 #include "kstdio.h"
 #include "gfx.h"
 #include "bdev.h"
+#include "ata.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -45,7 +46,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help clear heap mem sysinfo disk blk <d> <lba> [n] blktest [d] echo <t> alloc <n> free <i> slots history reboot\n");
+    con_puts("commands: help clear heap mem sysinfo atastat disk blk <d> <lba> [n] blktest [d] echo <t> alloc <n> free <i> slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -136,6 +137,25 @@ done:
     if (r) kfree(r);
 }
 
+static void cmd_atastat(void) {
+    int n = ata_count();
+    if (!n) { kprintf("no ATA devices\n"); return; }
+    for (int i = 0; i < n; i++) {
+        ata_info_t ai;
+        if (ata_get_info(i, &ai) != 0) continue;
+        kprintf("--- %s ---\n", ai.name);
+        kprintf("  model : %s\n", ai.model);
+        kprintf("  serial: %s\n", ai.serial);
+        kprintf("  size  : %u sectors (%u MiB)\n",
+                (unsigned)ai.sectors, (unsigned)(ai.sectors / 2048));
+        kprintf("  reads : %u (%u KiB)\n",
+                ai.reads, (unsigned)(ai.bytes_read / 1024));
+        kprintf("  writes: %u (%u KiB)\n",
+                ai.writes, (unsigned)(ai.bytes_written / 1024));
+        kprintf("  errors: %u\n", ai.errors);
+    }
+}
+
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -163,6 +183,7 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "alloc")) cmd_alloc(arg);
     else if (!strcmp(cmd, "free")) cmd_free(arg);
     else if (!strcmp(cmd, "slots")) cmd_slots();
+    else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);
     else if (!strcmp(cmd, "blktest")) cmd_blktest(arg);
