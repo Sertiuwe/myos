@@ -14,4 +14,5 @@ void      gfx_flush(void);
 uintptr_t gfx_fb_ptr(void);
 uint32_t gfx_pitch_val(void);
 uint8_t gfx_bpp_val(void);
+void gfx_flush_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h);
 #endif

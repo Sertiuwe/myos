@@ -2,6 +2,8 @@
 #include "memory.h"
 #include "kstring.h"
 #include "gfx.h"
+#include "asset.h"
+#include "graphic_api.h"
 #include "con.h"
 #include "memmap.h"
 #include "shell.h"
@@ -247,6 +249,36 @@ void gfx_flush_rows(uint32_t y0, uint32_t y1) {
 
 void gfx_flush(void) { gfx_flush_rows(0, fb_height); }
 
+/* Partial flush: converts only the requested rectangle. Same bpp logic as
+   gfx_flush_rows, but bounded in X too -- the compositor needs cheap updates. */
+void gfx_flush_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h) {
+    if (x0 >= fb_width || y0 >= fb_height || !w || !h) return;
+    if (x0 + w > fb_width)  w = fb_width  - x0;
+    if (y0 + h > fb_height) h = fb_height - y0;
+    for (uint32_t y = y0; y < y0 + h; y++) {
+        uint8_t *row = fb_bytes + (uint64_t)y * fb_pitch;
+        const uint32_t *src = back_buffer + (uint64_t)y * fb_width;
+        for (uint32_t x = x0; x < x0 + w; x++) {
+            uint32_t c = src[x];
+            uint8_t r = (uint8_t)((c >> 16) & 0xFF);
+            uint8_t g = (uint8_t)((c >> 8) & 0xFF);
+            uint8_t b = (uint8_t)(c & 0xFF);
+            if (fb_bpp == 32) {
+                row[x * 4 + 0] = b; row[x * 4 + 1] = g;
+                row[x * 4 + 2] = r; row[x * 4 + 3] = 0;
+            } else if (fb_bpp == 24) {
+                row[x * 3 + 0] = b; row[x * 3 + 1] = g; row[x * 3 + 2] = r;
+            } else if (fb_bpp == 16) {
+                uint16_t v = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+                row[x * 2 + 0] = (uint8_t)(v & 0xFF); row[x * 2 + 1] = (uint8_t)(v >> 8);
+            } else if (fb_bpp == 15) {
+                uint16_t v = (uint16_t)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+                row[x * 2 + 0] = (uint8_t)(v & 0xFF); row[x * 2 + 1] = (uint8_t)(v >> 8);
+            }
+        }
+    }
+}
+
 
 static void klog(const char *s) {
     serial_puts(s);
@@ -334,6 +366,10 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     __asm__ volatile("sti");
     kprintf("IRQ: enabled\n");
     pci_init();
+    asset_init(8, 16);
+    ga_init();
+    kprintf("GA: font %ux%u (%s coords)\n",
+            ga_font_w(), ga_font_h(), ga_font_cell_mode() ? "cell" : "pixel");
     mouse_init();
     pic_unmask(12);
     cursor_init((uint32_t *)(uintptr_t)gfx_fb_ptr(), gfx_width(), gfx_height(), gfx_pitch_val(), gfx_bpp_val());

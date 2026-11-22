@@ -14,6 +14,8 @@
 #include "pit.h"
 #include "mouse.h"
 #include "cursor.h"
+#include "asset.h"
+#include "graphic_api.h"
 #include "pci.h"
 #include <stdint.h>
 
@@ -53,7 +55,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help mouse lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help mouse theme guitest lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -323,6 +325,79 @@ static void cmd_mouse(void) {
             (unsigned)pk, (unsigned)sd, (unsigned)od);
 }
 
+static void cmd_theme(const char *arg) {
+    if (arg && arg[0]) {
+        if (asset_theme_set(arg)) { kprintf("unknown theme: %s (dark|light)\n", arg); return; }
+    }
+    const asset_theme_t *t = asset_theme();
+    const asset_metrics_t *m = asset_metrics();
+    kprintf("theme=%s  font=%ux%u  title_h=%u row_h=%u btn_h=%u border=%u\n",
+            asset_theme_name(), m->font_w, m->font_h, m->title_h, m->row_h,
+            m->btn_h, m->border);
+    kprintf("  desktop=%06x win=%06x title=%06x client=%06x\n",
+            t->desktop_bg, t->win_bg, t->win_title_active, t->client_bg);
+    kprintf("  text=%06x btn=%06x sel=%06x accent=%06x danger=%06x\n",
+            t->text, t->btn_face, t->list_sel, t->accent, t->danger);
+    kprintf("  icons:");
+    for (int i = 0; i < ASSET_ICO_COUNT; i++) kprintf(" %s", asset_icon_name((asset_icon_id_t)i));
+    kprintf("\n  strings: %u entries, e.g. \"%s\", \"%s\"\n",
+            (unsigned)ASSET_STR_COUNT, asset_str(ASSET_STR_APP_FILES),
+            asset_str(ASSET_STR_BTN_NEW_FOLDER));
+}
+
+static void cmd_guitest(void) {
+    const asset_theme_t *t = asset_theme();
+    const asset_metrics_t *m = asset_metrics();
+
+    ga_rect_t desk = { 0, 0, (int32_t)gfx_width(), (int32_t)gfx_height() };
+    ga_set_clip(desk);
+    ga_fill(desk, t->desktop_bg);
+    for (int32_t gy = 0; gy < desk.h; gy += 24) ga_hline(0, gy, desk.w, t->desktop_grid);
+    for (int32_t gx = 0; gx < desk.w; gx += 24) ga_vline(gx, 0, desk.h, t->desktop_grid);
+
+    ga_rect_t win = { 60, 60, 620, 460 };
+    ga_window_frame(win, asset_str(ASSET_STR_APP_FILES), 1);
+    ga_rect_t cl = ga_window_client(win);
+    ga_push_clip(cl);
+
+    int32_t bx = cl.x + (int32_t)m->gap;
+    int32_t by = cl.y + (int32_t)m->gap;
+    ga_rect_t b1 = ga_button(bx, by, asset_str(ASSET_STR_BTN_UP), ASSET_ICO_UP, GA_BTN_NORMAL);
+    bx = b1.x + b1.w + (int32_t)m->gap;
+    ga_rect_t b2 = ga_button(bx, by, asset_str(ASSET_STR_BTN_NEW_FOLDER), ASSET_ICO_PLUS, GA_BTN_HOVER);
+    bx = b2.x + b2.w + (int32_t)m->gap;
+    ga_rect_t b3 = ga_button(bx, by, asset_str(ASSET_STR_BTN_REFRESH), ASSET_ICO_REFRESH, GA_BTN_PRESSED);
+    bx = b3.x + b3.w + (int32_t)m->gap;
+    ga_button(bx, by, asset_str(ASSET_STR_BTN_SYNC), ASSET_ICO_SAVE, GA_BTN_NORMAL);
+
+    int32_t ly = by + b1.h + (int32_t)m->gap;
+    ga_rect_t path = { cl.x + (int32_t)m->gap, ly,
+                       cl.w - 2 * (int32_t)m->gap, (int32_t)m->row_h };
+    ga_fill(path, t->list_bg);
+    ga_frame(path, 1, t->win_border);
+    ga_text(path.x + 6, path.y + (path.h - (int32_t)ga_font_h()) / 2, "/", t->accent);
+    ly += path.h + (int32_t)m->gap;
+
+    static const char *names[] = { "data", "test.txt", "docs", "info.txt", "kernel.log" };
+    static const int ico[] = { ASSET_ICO_FOLDER, ASSET_ICO_FILE, ASSET_ICO_FOLDER,
+                               ASSET_ICO_FILE, ASSET_ICO_FILE };
+    static const char *sizes[] = { "12 B", "35 B", "0 B", "24 B", "1024 B" };
+    for (int i = 0; i < 5; i++) {
+        ga_rect_t row = { cl.x + (int32_t)m->gap, ly,
+                          cl.w - 2 * (int32_t)m->gap, (int32_t)m->row_h };
+        if (row.y + row.h > cl.y + cl.h) break;
+        ga_list_row(row, i, i == 1, ico[i], names[i], sizes[i]);
+        ly += row.h;
+    }
+
+    ga_pop_clip();
+    ga_flush_rect(desk);
+
+    kprintf("guitest: mockup on screen, press any key to return\n");
+    while (!kbd_getchar()) pit_sleep_ms(20);
+    con_clear();
+}
+
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -373,6 +448,8 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "sync")) { myfs_sync(); kprintf("synced\n"); }
     else if (!strcmp(cmd, "lspci")) cmd_lspci();
     else if (!strcmp(cmd, "mouse")) cmd_mouse();
+    else if (!strcmp(cmd, "theme")) cmd_theme(arg);
+    else if (!strcmp(cmd, "guitest")) cmd_guitest();
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);

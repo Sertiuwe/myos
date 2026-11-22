@@ -5,7 +5,7 @@ CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-pr
 LDFLAGS = -T linker.ld -nostdlib -static
 
 KZONE   = 131072
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o
 
 all: os.img
 
@@ -126,3 +126,9 @@ mouse.o: mouse.c mouse.h pic.h kstdio.h
 
 cursor.o: cursor.c cursor.h kstring.h
 	$(CC) $(CFLAGS) -c cursor.c -o cursor.o
+
+asset.o: asset.c asset.h kstring.h
+	$(CC) $(CFLAGS) -c asset.c -o asset.o
+
+graphic_api.o: graphic_api.c graphic_api.h gfx.h asset.h kstring.h
+	$(CC) $(CFLAGS) -c graphic_api.c -o graphic_api.o
