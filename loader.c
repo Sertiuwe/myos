@@ -11,6 +11,7 @@
 #include "rtc.h"
 #include "bcache.h"
 #include "myfs.h"
+#include "idt.h"
 
 struct boot_info {
     uint64_t fb_addr;
@@ -317,6 +318,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     ata_init();
     bcache_init();
     myfs_mount("ata1");
+    idt_init();
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();

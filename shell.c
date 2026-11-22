@@ -49,7 +49,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help ls cat touch write rm clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help testfault ls cat touch write rm clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -234,6 +234,14 @@ static void cmd_rm(const char *arg) {
 }
 
 /* helper: обёртка над resolve_path для шелла */
+static void cmd_testfault(void) {
+    kprintf("Triggering #DE (divide by zero)...\n");
+    volatile int x = 1;
+    volatile int y = 0;
+    volatile int z = x / y;
+    (void)z;
+}
+
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -263,6 +271,7 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "slots")) cmd_slots();
     else if (!strcmp(cmd, "date")) cmd_date();
     else if (!strcmp(cmd, "bcstat")) cmd_bcstat();
+    else if (!strcmp(cmd, "testfault")) cmd_testfault();
     else if (!strcmp(cmd, "ls")) cmd_ls(arg);
     else if (!strcmp(cmd, "cat")) cmd_cat(arg);
     else if (!strcmp(cmd, "touch")) cmd_touch(arg);
