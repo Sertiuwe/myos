@@ -6,6 +6,7 @@
 #include "kstring.h"
 #include "kstdio.h"
 #include "gfx.h"
+#include "bdev.h"
 #include <stdint.h>
 
 static char  *line;  static size_t len, cap;
@@ -44,7 +45,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help clear heap mem sysinfo echo <t> alloc <n> free <i> slots history reboot\n");
+    con_puts("commands: help clear heap mem sysinfo disk blk <d> <lba> [n] blktest [d] echo <t> alloc <n> free <i> slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -70,6 +71,69 @@ static void cmd_slots(void) {
         con_put_x((uint64_t)(uintptr_t)slots[i]); con_puts(" ");
         con_put_u(slot_sz[i]); con_puts(" B\n");
     }
+}
+
+static void hexdump(const uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i += 16) {
+        kprintf("%04x: ", (unsigned)i);
+        for (int j = 0; j < 16; j++)
+            if (i + (size_t)j < n) kprintf("%02x ", p[i + j]);
+            else kprintf("   ");
+        kprintf("|");
+        for (int j = 0; j < 16 && i + (size_t)j < n; j++) {
+            char c = (char)p[i + j];
+            kprintf("%c", (c >= 32 && c < 127) ? c : '.');
+        }
+        kprintf("|\n");
+    }
+}
+
+static void cmd_disk(void) {
+    int n = bdev_count();
+    if (!n) { kprintf("no block devices\n"); return; }
+    for (int i = 0; i < n; i++) {
+        bdev_t *b = bdev_by_index(i);
+        kprintf("%s: %u sectors (%u MiB)\n", b->name,
+                (unsigned)b->sectors, (unsigned)(b->sectors / 2048));
+    }
+}
+
+static void cmd_blk(const char *arg) {
+    char name[16]; size_t i = 0;
+    const char *p = arg;
+    while (p[i] && p[i] != ' ' && i < 15) { name[i] = p[i]; i++; }
+    name[i] = 0;
+    p += i; while (*p == ' ') p++;
+    uint64_t lba = parse_u(p);
+    while (*p && *p != ' ') p++; while (*p == ' ') p++;
+    uint32_t cnt = *p ? (uint32_t)parse_u(p) : 1;
+    if (cnt < 1) cnt = 1; if (cnt > 2) cnt = 2;
+    bdev_t *b = bdev_by_name(name);
+    if (!b) { kprintf("no such disk: %s\n", name); return; }
+    uint8_t *buf = (uint8_t *)kmalloc((size_t)cnt * 512);
+    if (!buf) { kprintf("oom\n"); return; }
+    if (bdev_read(b, lba, cnt, buf)) { kprintf("read error\n"); kfree(buf); return; }
+    for (uint32_t s = 0; s < cnt; s++) {
+        kprintf("--- %s lba %u ---\n", name, (unsigned)(lba + s));
+        hexdump(buf + (size_t)s * 512, 512);
+    }
+    kfree(buf);
+}
+
+#define BLKTEST_LBA 4096
+static void cmd_blktest(const char *arg) {
+    bdev_t *b = bdev_by_name(arg[0] ? arg : "ata1");
+    if (!b) { kprintf("no such disk\n"); return; }
+    uint8_t *w = (uint8_t *)kmalloc(512), *r = (uint8_t *)kmalloc(512);
+    if (!w || !r) { kprintf("oom\n"); goto done; }
+    for (int i = 0; i < 512; i++) w[i] = (uint8_t)(i * 7 + 3);
+    if (bdev_write(b, BLKTEST_LBA, 1, w)) { kprintf("write error\n"); goto done; }
+    if (bdev_read(b, BLKTEST_LBA, 1, r)) { kprintf("read error\n"); goto done; }
+    int ok = (memcmp(w, r, 512) == 0);
+    kprintf("blktest %s lba %u: %s\n", b->name, BLKTEST_LBA, ok ? "PASS" : "FAIL");
+done:
+    if (w) kfree(w);
+    if (r) kfree(r);
 }
 
 static void cmd_sysinfo(void) {
@@ -99,6 +163,9 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "alloc")) cmd_alloc(arg);
     else if (!strcmp(cmd, "free")) cmd_free(arg);
     else if (!strcmp(cmd, "slots")) cmd_slots();
+    else if (!strcmp(cmd, "disk")) cmd_disk();
+    else if (!strcmp(cmd, "blk")) cmd_blk(arg);
+    else if (!strcmp(cmd, "blktest")) cmd_blktest(arg);
     else if (!strcmp(cmd, "sysinfo")) cmd_sysinfo();
     else if (!strcmp(cmd, "history")) {
         for (size_t i = 0; i < hlen; i++) {

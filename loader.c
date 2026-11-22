@@ -6,6 +6,8 @@
 #include "memmap.h"
 #include "shell.h"
 #include "kstdio.h"
+#include "bdev.h"
+#include "ata.h"
 
 struct boot_info {
     uint64_t fb_addr;
@@ -309,6 +311,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
 
     con_init(10, 300, fb_width - 10, fb_height - 10);
     kstdio_set_sink(klog);
+    ata_init();
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();

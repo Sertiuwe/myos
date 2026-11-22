@@ -5,7 +5,7 @@ CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-pr
 LDFLAGS = -T linker.ld -nostdlib -static
 
 KZONE   = 131072
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o
 
 all: os.img
 
@@ -52,6 +52,12 @@ kstdlib.o: kstdlib.c kstdlib.h kctype.h kerrno.h
 kpanic.o: kpanic.c kpanic.h kstdio.h
 	$(CC) $(CFLAGS) -c kpanic.c -o kpanic.o
 
+bdev.o: bdev.c bdev.h kstring.h
+	$(CC) $(CFLAGS) -c bdev.c -o bdev.o
+
+ata.o: ata.c ata.h bdev.h kstdio.h
+	$(CC) $(CFLAGS) -c ata.c -o ata.o
+
 kernel.elf: $(OBJS) linker.ld
 	$(LD) $(LDFLAGS) -o kernel.elf $(OBJS)
 
@@ -69,8 +75,11 @@ os.img: boot.bin stage2.bin kernel.bin
 	cat boot.bin stage2.bin kernel.bin > os.img
 	truncate -s 1474560 os.img
 
-run: os.img
-	qemu-system-x86_64 -drive file=os.img,format=raw -vnc :1 -display none -serial stdio
+fs.img:
+	@if [ ! -f fs.img ]; then truncate -s 8388608 fs.img; echo "created fs.img (8 MiB)"; fi
+
+run: os.img fs.img
+	qemu-system-x86_64 -drive file=os.img,format=raw,if=ide,bus=0,unit=0 -drive file=fs.img,format=raw,if=ide,bus=0,unit=1 -vnc :1 -display none -serial stdio
 
 clean:
 	rm -f *.o *.bin *.elf os.img
