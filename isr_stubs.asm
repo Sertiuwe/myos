@@ -125,6 +125,9 @@ ISR_NOERR 31
 IRQ_STUB 32
 IRQ_STUB 33
 
+; IRQ12 = INT44 (PS/2 mouse)
+IRQ_STUB 44
+
 global isr_stub_default
 isr_stub_default:
     push qword 0

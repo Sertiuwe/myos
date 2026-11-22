@@ -5,7 +5,7 @@ CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-pr
 LDFLAGS = -T linker.ld -nostdlib -static
 
 KZONE   = 131072
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o
 
 all: os.img
 
@@ -112,3 +112,17 @@ clean:
 	rm -f *.o *.bin *.elf os.img
 
 .PHONY: all clean run
+
+	$(CC) $(CFLAGS) -c mouse.c -o mouse.o
+
+	$(CC) $(CFLAGS) -c cursor.c -o cursor.o
+
+	$(CC) $(CFLAGS) -c mouse.c -o mouse.o
+
+	$(CC) $(CFLAGS) -c cursor.c -o cursor.o
+
+mouse.o: mouse.c mouse.h pic.h kstdio.h
+	$(CC) $(CFLAGS) -c mouse.c -o mouse.o
+
+cursor.o: cursor.c cursor.h kstring.h
+	$(CC) $(CFLAGS) -c cursor.c -o cursor.o

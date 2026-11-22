@@ -10,4 +10,8 @@ void      gfx_draw_char(char c, int x, int y, uint32_t col);
 void      gfx_flush_rows(uint32_t y0, uint32_t y1);
 void      gfx_flush(void);
 
+
+uintptr_t gfx_fb_ptr(void);
+uint32_t gfx_pitch_val(void);
+uint8_t gfx_bpp_val(void);
 #endif

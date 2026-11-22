@@ -40,4 +40,10 @@ void pic_mask(uint8_t irq) {
 void pic_unmask(uint8_t irq) {
     uint16_t port = (irq < 8) ? PIC1_DATA : PIC2_DATA;
     outb(port, inb(port) & ~(1 << (irq % 8)));
+    /* Slave IRQs (8-15) travel through cascade line IRQ2 on master.
+       Without unmasking it, no slave IRQ ever reaches the CPU. */
+    if (irq >= 8) {
+        outb(PIC1_DATA, inb(PIC1_DATA) & ~(1 << 2));
+    }
+
 }

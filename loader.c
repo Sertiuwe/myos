@@ -13,6 +13,8 @@
 #include "myfs.h"
 #include "idt.h"
 #include "pci.h"
+#include "cursor.h"
+#include "mouse.h"
 #include "pit.h"
 #include "pic.h"
 
@@ -203,6 +205,9 @@ static void serial_dec(uint32_t v) {
 uint32_t *gfx_backbuffer(void) { return back_buffer; }
 uint32_t gfx_width(void) { return fb_width; }
 uint32_t gfx_height(void) { return fb_height; }
+uintptr_t gfx_fb_ptr(void) { return (uintptr_t)fb_ptr; }
+uint32_t gfx_pitch_val(void) { return fb_pitch; }
+uint8_t gfx_bpp_val(void) { return (uint8_t)fb_bpp; }
 void gfx_draw_char(char c, int x, int y, uint32_t col) { draw_char(c, x, y, col); }
 
 void gfx_flush_rows(uint32_t y0, uint32_t y1) {
@@ -329,6 +334,10 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     __asm__ volatile("sti");
     kprintf("IRQ: enabled\n");
     pci_init();
+    mouse_init();
+    pic_unmask(12);
+    cursor_init((uint32_t *)(uintptr_t)gfx_fb_ptr(), gfx_width(), gfx_height(), gfx_pitch_val(), gfx_bpp_val());
+    mouse_set_screen_size(gfx_width(), gfx_height());
     kheap_set_reporter(klog);
     memmap_load(binfo->e820_count);
     memmap_dump();

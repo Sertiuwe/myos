@@ -1,4 +1,5 @@
 #include "kbd.h"
+#include "mouse.h"
 #include <stdint.h>
 
 #define KBD_DATA   0x60
@@ -38,7 +39,15 @@ static const char map_hi[128] = {
 };
 
 char kbd_getchar(void) {
-    if (!(inb(KBD_STATUS) & 1)) return 0;
+    uint8_t st = inb(KBD_STATUS);
+    if (!(st & 1)) return 0;        /* output buffer empty */
+    if (st & 0x20) {
+        /* Aux byte in the output buffer. IRQ12 normally drains it, but if the
+           controller ever fails to raise it we drain it here ourselves --
+           otherwise bit5 stays latched and the keyboard dies forever. */
+        mouse_irq_handler();
+        return 0;
+    }
     uint8_t sc = inb(KBD_DATA);
     if (sc == 0x2A || sc == 0x36) { shift = 1; return 0; }
     if (sc == 0xAA || sc == 0xB6) { shift = 0; return 0; }

@@ -12,6 +12,8 @@
 #include "bcache.h"
 #include "myfs.h"
 #include "pit.h"
+#include "mouse.h"
+#include "cursor.h"
 #include "pci.h"
 #include <stdint.h>
 
@@ -51,7 +53,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help mouse lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -311,6 +313,16 @@ static void cmd_lspci(void) {
     }
 }
 
+static void cmd_mouse(void) {
+    const mouse_state_t *ms = mouse_get_state();
+    uint64_t pk, sd, od;
+    mouse_get_stats(&pk, &sd, &od);
+    kprintf("mouse: %s x=%d y=%d btn=%u\n",
+            ms->present ? "present" : "absent", ms->x, ms->y, ms->buttons);
+    kprintf("  packets=%u sync_drops=%u ovf_drops=%u\n",
+            (unsigned)pk, (unsigned)sd, (unsigned)od);
+}
+
 static void cmd_sysinfo(void) {
     kheap_stats_t st;
     kheap_get_stats(&st);
@@ -360,6 +372,7 @@ static void dispatch(char *cmd) {
     }
     else if (!strcmp(cmd, "sync")) { myfs_sync(); kprintf("synced\n"); }
     else if (!strcmp(cmd, "lspci")) cmd_lspci();
+    else if (!strcmp(cmd, "mouse")) cmd_mouse();
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);
@@ -378,6 +391,11 @@ void shell_run(void) {
     line_init();
     con_puts("myos> ");
     for (;;) {
+        /* Обновляем курсор мыши каждый цикл */
+        {
+            const mouse_state_t *ms = mouse_get_state();
+            if (ms->present) cursor_update(ms->x, ms->y);
+        }
         char c = kbd_getchar();
         if (!c) { __asm__ volatile ("pause"); continue; }   /* IF=0, hlt усыпил бы навечно */
         if (c == '\n') {
