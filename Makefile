@@ -5,7 +5,7 @@ CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-pr
 LDFLAGS = -T linker.ld -nostdlib -static
 
 KZONE   = 131072
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o graphic_server.o app_demo.o myfsapp.o sched.o sched_switch.o fslock.o term.o syscall.o syslib.o config.o
 
 all: os.img
 
@@ -132,3 +132,33 @@ asset.o: asset.c asset.h kstring.h
 
 graphic_api.o: graphic_api.c graphic_api.h gfx.h asset.h kstring.h
 	$(CC) $(CFLAGS) -c graphic_api.c -o graphic_api.o
+
+graphic_server.o: graphic_server.c graphic_server.h graphic_api.h gfx.h mouse.h kbd.h pit.h kstring.h
+	$(CC) $(CFLAGS) -c graphic_server.c -o graphic_server.o
+
+app_demo.o: app_demo.c app_demo.h graphic_server.h asset.h pit.h kstdio.h kstring.h
+	$(CC) $(CFLAGS) -c app_demo.c -o app_demo.o
+
+myfsapp.o: myfsapp.c myfsapp.h graphic_server.h graphic_api.h asset.h myfs.h kstring.h kstdio.h pit.h
+	$(CC) $(CFLAGS) -c myfsapp.c -o myfsapp.o
+
+sched.o: sched.c sched.h pit.h kstring.h kstdio.h
+	$(CC) $(CFLAGS) -c sched.c -o sched.o
+
+sched_switch.o: sched_switch.asm
+	$(NASM) -f elf64 sched_switch.asm -o sched_switch.o
+
+fslock.o: fslock.c fslock.h sched.h
+	$(CC) $(CFLAGS) -c fslock.c -o fslock.o
+
+term.o: term.c term.h graphic_server.h graphic_api.h asset.h syslib.h sched.h pit.h kstring.h kstdio.h
+	$(CC) $(CFLAGS) -c term.c -o term.o
+
+syscall.o: syscall.c syscall.h myfs.h fslock.h sched.h pit.h rtc.h kstring.h
+	$(CC) $(CFLAGS) -c syscall.c -o syscall.o
+
+syslib.o: syslib.c syslib.h syscall.h
+	$(CC) $(CFLAGS) -c syslib.c -o syslib.o
+
+config.o: config.c config.h syslib.h asset.h kstring.h kstdio.h kstdlib.h
+	$(CC) $(CFLAGS) -c config.c -o config.o

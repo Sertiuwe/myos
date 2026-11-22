@@ -16,6 +16,12 @@
 #include "cursor.h"
 #include "asset.h"
 #include "graphic_api.h"
+#include "app_demo.h"
+#include "myfsapp.h"
+#include "graphic_server.h"
+#include "sched.h"
+#include "term.h"
+#include "config.h"
 #include "pci.h"
 #include <stdint.h>
 
@@ -55,7 +61,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help mouse theme guitest lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help mouse theme guitest gui files term ps lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -327,7 +333,8 @@ static void cmd_mouse(void) {
 
 static void cmd_theme(const char *arg) {
     if (arg && arg[0]) {
-        if (asset_theme_set(arg)) { kprintf("unknown theme: %s (dark|light)\n", arg); return; }
+        if (config_set_theme(arg)) { kprintf("unknown theme: %s (dark|light)\n", arg); return; }
+        kprintf("theme saved to %s\n", config_path());
     }
     const asset_theme_t *t = asset_theme();
     const asset_metrics_t *m = asset_metrics();
@@ -395,7 +402,61 @@ static void cmd_guitest(void) {
 
     kprintf("guitest: mockup on screen, press any key to return\n");
     while (!kbd_getchar()) pit_sleep_ms(20);
+    gfx_clear_all(0x000000);
     con_clear();
+    con_flush();
+}
+
+static volatile int gui_done;
+static char gui_done_chan;
+
+static void gui_thread(void *arg) {
+    int mode = (int)(intptr_t)arg;
+    cursor_reset();
+    gs_init();
+    if (config_load() != 0) config_init_defaults();
+    asset_theme_set(config_get()->theme);
+    gs_set_options(config_get()->grid, config_get()->shadow, config_get()->clock);
+    gs_set_dblclick_ms(config_get()->dblclick_ms);
+    gs_desktop_clear();
+    gs_desktop_add("Files", ASSET_ICO_FOLDER, myfsapp_open);
+    gs_desktop_add("Term", ASSET_ICO_TERMINAL, term_open);
+    gs_desktop_add("System", ASSET_ICO_DISK, app_demo_about);
+    gs_set_launcher(myfsapp_open);
+    myfsapp_open();
+    if (mode == 0) app_demo_about();
+    if (mode == 2) term_open();
+    gs_run();
+    cursor_reset();
+    gfx_clear_all(0x000000);
+    con_clear();
+    con_flush();
+    gui_done = 1;
+    sched_wake(&gui_done_chan);
+    sched_exit();
+}
+
+static void enter_gui(int mode) {
+    gui_done = 0;
+    sched_spawn("gui", gui_thread, (void *)(intptr_t)mode, 65536);
+    sched_block_on(&gui_done_chan);
+    kprintf("GUI closed, back to text mode\n");
+}
+
+static void cmd_gui(void)  { enter_gui(0); }
+static void cmd_files(void) { enter_gui(1); }
+static void cmd_term(void)  { enter_gui(2); }
+
+static void cmd_ps(void) {
+    kprintf("  id name                 state     pr cpu_ticks  boost/demote\n");
+    static const char *sn[] = { "DEAD", "READY", "RUNNING", "BLOCKED" };
+    for (int i = 0; i < SCHED_MAX_THREADS; i++) {
+        const thread_t *t = sched_get(i);
+        if (!t) continue;
+        kprintf("%4d %-20s %-9s p%d %-9u %u/%u\n", t->id, t->name, sn[t->state],
+                sched_eff_prio_tid(t->id), (unsigned)t->cpu_ticks,
+                (unsigned)t->boosts, (unsigned)t->demotes);
+    }
 }
 
 static void cmd_sysinfo(void) {
@@ -450,6 +511,10 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "mouse")) cmd_mouse();
     else if (!strcmp(cmd, "theme")) cmd_theme(arg);
     else if (!strcmp(cmd, "guitest")) cmd_guitest();
+    else if (!strcmp(cmd, "gui")) cmd_gui();
+    else if (!strcmp(cmd, "files")) cmd_files();
+    else if (!strcmp(cmd, "ps")) cmd_ps();
+    else if (!strcmp(cmd, "term")) cmd_term();
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);
@@ -474,6 +539,7 @@ void shell_run(void) {
             if (ms->present) cursor_update(ms->x, ms->y);
         }
         char c = kbd_getchar();
+        if (!c) pit_sleep_ms(2);
         if (!c) { __asm__ volatile ("pause"); continue; }   /* IF=0, hlt усыпил бы навечно */
         if (c == '\n') {
             con_putc('\n'); con_flush();

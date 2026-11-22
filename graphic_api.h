@@ -53,4 +53,11 @@ ga_rect_t ga_window_close(ga_rect_t r);
 
 void ga_flush_rect(ga_rect_t r);
 
+void ga_scrollbar(ga_rect_t r, int total, int visible, int offset);
+ga_rect_t ga_scroll_thumb(ga_rect_t r, int total, int visible, int offset);
+uint32_t ga_mix(uint32_t a, uint32_t b, int t);
+void ga_grad_v(ga_rect_t r, uint32_t top, uint32_t bottom);
+void ga_darken(ga_rect_t r, int amt);
+void ga_shadow(ga_rect_t r);
+void ga_icon_ex(int32_t x, int32_t y, asset_icon_id_t id, int scale, uint32_t col);
 #endif

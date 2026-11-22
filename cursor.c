@@ -105,3 +105,8 @@ void cursor_hide(void) {
         cur_x = -1;
     }
 }
+
+void cursor_reset(void) {
+    bg_valid = 0;
+    cur_x = -1; cur_y = -1;
+}

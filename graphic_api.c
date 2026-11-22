@@ -311,25 +311,35 @@ void ga_window_frame(ga_rect_t r, const char *title, int active) {
     const asset_metrics_t *m = asset_metrics();
 
     ga_fill(r, t->win_bg);
-    ga_frame(r, m->border, t->win_border);
+    ga_frame(r, m->border, active ? ga_mix(t->win_border, t->accent, 90) : t->win_border);
 
     ga_rect_t tb = { r.x + (int32_t)m->border, r.y + (int32_t)m->border,
                      r.w - 2 * (int32_t)m->border,
                      (int32_t)m->title_h - (int32_t)m->border };
-    ga_fill(tb, active ? t->win_title_active : t->win_title_inactive);
+    if (active) ga_grad_v(tb, ga_mix(t->win_title_active, 0xFFFFFF, 45), t->win_title_active);
+    else        ga_grad_v(tb, ga_mix(t->win_title_inactive, 0xFFFFFF, 18), t->win_title_inactive);
+    ga_hline(tb.x, tb.y, tb.w, ga_mix(active ? t->win_title_active : t->win_title_inactive, 0xFFFFFF, 110));
 
     ga_rect_t cb = ga_window_close(r);
     int32_t avail = cb.x - tb.x - 8;
-    ga_text_fit(tb.x + 6, tb.y + (tb.h - (int32_t)f_h) / 2, avail,
+    ga_text_fit(tb.x + 8, tb.y + (tb.h - (int32_t)f_h) / 2, avail,
                 title, active ? t->win_title_text : t->win_title_text_dim);
 
-    ga_fill(cb, active ? t->danger : t->btn_face);
+    ga_fill(cb, active ? t->danger : ga_mix(t->btn_face, t->win_title_inactive, 120));
+    ga_frame(cb, 1, ga_mix(t->danger, 0x000000, 90));
     ga_icon(cb.x + (cb.w - (int32_t)m->icon) / 2,
             cb.y + (cb.h - (int32_t)m->icon) / 2,
             ASSET_ICO_CLOSE, t->win_title_text);
 
     ga_rect_t cl = ga_window_client(r);
     ga_fill(cl, t->client_bg);
+
+    /* resize grip */
+    int32_t gx = r.x + r.w - 13, gy = r.y + r.h - 13;
+    for (int i = 0; i < 3; i++) {
+        int32_t o = 3 + i * 4;
+        ga_line(gx + o, gy + 11, gx + 11, gy + o, ga_mix(t->win_border, t->accent, 70));
+    }
 }
 
 void ga_flush_rect(ga_rect_t r) {
@@ -337,4 +347,89 @@ void ga_flush_rect(ga_rect_t r) {
     ga_rect_t c = isect(r, full);
     if (c.w <= 0 || c.h <= 0) return;
     gfx_flush_rect((uint32_t)c.x, (uint32_t)c.y, (uint32_t)c.w, (uint32_t)c.h);
+}
+
+ga_rect_t ga_scroll_thumb(ga_rect_t r, int total, int visible, int offset) {
+    ga_rect_t th = r;
+    if (total <= visible || visible <= 0 || r.h <= 0) return th;
+    int32_t h = (int32_t)((int64_t)r.h * visible / total);
+    if (h < 14) h = 14;
+    if (h > r.h) h = r.h;
+    int maxoff = total - visible;
+    if (offset < 0) offset = 0;
+    if (offset > maxoff) offset = maxoff;
+    int32_t y = r.y + (maxoff ? (int32_t)((int64_t)(r.h - h) * offset / maxoff) : 0);
+    th.y = y; th.h = h;
+    return th;
+}
+
+void ga_scrollbar(ga_rect_t r, int total, int visible, int offset) {
+    const asset_theme_t *t = asset_theme();
+    ga_fill(r, t->scroll_track);
+    ga_rect_t th = ga_scroll_thumb(r, total, visible, offset);
+    ga_fill(th, (total <= visible) ? t->scroll_track : t->scroll_thumb);
+    ga_frame(th, 1, t->win_border);
+}
+
+uint32_t ga_mix(uint32_t a, uint32_t b, int t) {
+    if (t < 0) t = 0;
+    if (t > 255) t = 255;
+    uint32_t ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+    uint32_t br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
+    uint32_t r = ar + ((br - ar) * (uint32_t)t) / 255;
+    uint32_t g = ag + ((bg - ag) * (uint32_t)t) / 255;
+    uint32_t bl = ab + ((bb - ab) * (uint32_t)t) / 255;
+    return (r << 16) | (g << 8) | bl;
+}
+
+void ga_grad_v(ga_rect_t r, uint32_t top, uint32_t bottom) {
+    ga_rect_t c = isect(r, scr.clip);
+    if (c.w <= 0 || c.h <= 0 || !scr.pix) return;
+    for (int32_t y = c.y; y < c.y + c.h; y++) {
+        int t = (r.h > 1) ? (int)((int64_t)(y - r.y) * 255 / (r.h - 1)) : 0;
+        uint32_t col = ga_mix(top, bottom, t);
+        uint32_t *row = scr.pix + (uint32_t)y * scr.stride + (uint32_t)c.x;
+        for (int32_t x = 0; x < c.w; x++) row[x] = col;
+    }
+}
+
+void ga_darken(ga_rect_t r, int amt) {
+    ga_rect_t c = isect(r, scr.clip);
+    if (c.w <= 0 || c.h <= 0 || !scr.pix) return;
+    if (amt < 0) amt = 0;
+    if (amt > 256) amt = 256;
+    uint32_t k = (uint32_t)(256 - amt);
+    for (int32_t y = c.y; y < c.y + c.h; y++) {
+        uint32_t *row = scr.pix + (uint32_t)y * scr.stride + (uint32_t)c.x;
+        for (int32_t x = 0; x < c.w; x++) {
+            uint32_t p = row[x];
+            uint32_t rr = ((p >> 16) & 0xFF) * k / 256;
+            uint32_t gg = ((p >> 8) & 0xFF) * k / 256;
+            uint32_t bb = (p & 0xFF) * k / 256;
+            row[x] = (rr << 16) | (gg << 8) | bb;
+        }
+    }
+}
+
+void ga_shadow(ga_rect_t r) {
+    ga_rect_t s3 = { r.x + 8, r.y + 9, r.w, r.h };
+    ga_rect_t s2 = { r.x + 5, r.y + 6, r.w, r.h };
+    ga_rect_t s1 = { r.x + 3, r.y + 3, r.w, r.h };
+    ga_darken(s3, 26);
+    ga_darken(s2, 34);
+    ga_darken(s1, 52);
+}
+
+void ga_icon_ex(int32_t x, int32_t y, asset_icon_id_t id, int scale, uint32_t col) {
+    const uint16_t *rows = asset_icon(id);
+    if (scale < 1) scale = 1;
+    for (int ry = 0; ry < ASSET_ICON_SIZE; ry++) {
+        uint16_t bits = rows[ry];
+        for (int rx = 0; rx < ASSET_ICON_SIZE; rx++) {
+            if (bits & (uint16_t)(0x8000u >> rx)) {
+                ga_rect_t p = { x + rx * scale, y + ry * scale, scale, scale };
+                ga_fill(p, col);
+            }
+        }
+    }
 }

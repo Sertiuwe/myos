@@ -6,6 +6,7 @@
 #define KBD_STATUS 0x64
 
 static int shift;
+static int ext;
 
 static uint8_t inb(uint16_t p) {
     uint8_t v;
@@ -49,8 +50,29 @@ char kbd_getchar(void) {
         return 0;
     }
     uint8_t sc = inb(KBD_DATA);
+    if (sc == 0xE0) { ext = 1; return 0; }
+    if (ext) {
+        ext = 0;
+        if (sc & 0x80) return 0;
+        switch (sc) {
+        case 0x48: return KEY_UP;
+        case 0x50: return KEY_DOWN;
+        case 0x4B: return KEY_LEFT;
+        case 0x4D: return KEY_RIGHT;
+        case 0x47: return KEY_HOME;
+        case 0x4F: return KEY_END;
+        case 0x49: return KEY_PGUP;
+        case 0x51: return KEY_PGDN;
+        case 0x53: return KEY_DEL;
+        default:   return 0;
+        }
+    }
     if (sc == 0x2A || sc == 0x36) { shift = 1; return 0; }
     if (sc == 0xAA || sc == 0xB6) { shift = 0; return 0; }
     if (sc & 0x80) return 0;              /* break code */
     return shift ? map_hi[sc] : map_lo[sc];
 }
+
+static void (*kbd_hook)(void);
+void kbd_set_input_hook(void (*fn)(void)) { kbd_hook = fn; }
+void kbd_irq_notify(void) { if (kbd_hook) kbd_hook(); }

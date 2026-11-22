@@ -9,7 +9,8 @@
 
 static volatile mouse_state_t state;
 static volatile uint64_t mouse_packets, mouse_sync_drops, mouse_ovf_drops;
-static volatile uint8_t cycle;      /* 0=flags, 1=x, 2=y */
+static volatile uint8_t cycle;
+static void (*input_hook)(void);      /* 0=flags, 1=x, 2=y */
 static volatile uint8_t packet[3];
 static uint16_t screen_w = 1024;
 static uint16_t screen_h = 768;
@@ -190,6 +191,7 @@ void mouse_irq_handler(void) {
         mouse_consume(d);
     }
     ps2_irq_restore(f);
+    if (input_hook) input_hook();
 }
 
 void mouse_get_stats(uint64_t *packets, uint64_t *sync_drops, uint64_t *ovf_drops) {
@@ -197,3 +199,5 @@ void mouse_get_stats(uint64_t *packets, uint64_t *sync_drops, uint64_t *ovf_drop
     if (sync_drops)*sync_drops= mouse_sync_drops;
     if (ovf_drops) *ovf_drops = mouse_ovf_drops;
 }
+
+void mouse_set_input_hook(void (*fn)(void)) { input_hook = fn; }

@@ -15,4 +15,5 @@ void mouse_set_screen_size(uint16_t w, uint16_t h);
 
 void mouse_poll(void);
 void mouse_get_stats(uint64_t *packets, uint64_t *sync_drops, uint64_t *ovf_drops);
+void mouse_set_input_hook(void (*fn)(void));
 #endif

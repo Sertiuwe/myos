@@ -4,6 +4,7 @@
 #include "gfx.h"
 #include "asset.h"
 #include "graphic_api.h"
+#include "sched.h"
 #include "con.h"
 #include "memmap.h"
 #include "shell.h"
@@ -249,6 +250,12 @@ void gfx_flush_rows(uint32_t y0, uint32_t y1) {
 
 void gfx_flush(void) { gfx_flush_rows(0, fb_height); }
 
+void gfx_clear_all(uint32_t col) {
+    uint64_t n = (uint64_t)fb_width * fb_height;
+    for (uint64_t i = 0; i < n; i++) back_buffer[i] = col;
+    gfx_flush();
+}
+
 /* Partial flush: converts only the requested rectangle. Same bpp logic as
    gfx_flush_rows, but bounded in X too -- the compositor needs cheap updates. */
 void gfx_flush_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h) {
@@ -257,18 +264,39 @@ void gfx_flush_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h) {
     if (y0 + h > fb_height) h = fb_height - y0;
     for (uint32_t y = y0; y < y0 + h; y++) {
         uint8_t *row = fb_bytes + (uint64_t)y * fb_pitch;
-        const uint32_t *src = back_buffer + (uint64_t)y * fb_width;
+        const uint32_t *src = back_buffer + (uint64_t)y * fb_width + x0;
+        if (fb_bpp == 32) {
+            memcpy(row + (uint64_t)x0 * 4, src, (size_t)w * 4);
+            continue;
+        }
+        if (fb_bpp == 24) {
+            uint8_t *d = row + (uint64_t)x0 * 3;
+            const uint32_t *p = src;
+            uint32_t n = w;
+            while (n >= 4) {
+                uint32_t v0 = p[0], v1 = p[1], v2 = p[2], v3 = p[3];
+                uint64_t ua = (uint64_t)(v0 & 0xFFFFFF)
+                            | ((uint64_t)(v1 & 0xFFFFFF) << 24)
+                            | ((uint64_t)(v2 & 0xFFFF) << 48);
+                uint32_t ub = ((v2 >> 16) & 0xFF) | ((v3 & 0xFFFFFF) << 8);
+                memcpy(d, &ua, 8);
+                memcpy(d + 8, &ub, 4);
+                d += 12; p += 4; n -= 4;
+            }
+            while (n--) {
+                uint32_t v = *p++;
+                *d++ = (uint8_t)(v & 0xFF);
+                *d++ = (uint8_t)((v >> 8) & 0xFF);
+                *d++ = (uint8_t)((v >> 16) & 0xFF);
+            }
+            continue;
+        }
         for (uint32_t x = x0; x < x0 + w; x++) {
-            uint32_t c = src[x];
+            uint32_t c = src[x - x0];
             uint8_t r = (uint8_t)((c >> 16) & 0xFF);
             uint8_t g = (uint8_t)((c >> 8) & 0xFF);
             uint8_t b = (uint8_t)(c & 0xFF);
-            if (fb_bpp == 32) {
-                row[x * 4 + 0] = b; row[x * 4 + 1] = g;
-                row[x * 4 + 2] = r; row[x * 4 + 3] = 0;
-            } else if (fb_bpp == 24) {
-                row[x * 3 + 0] = b; row[x * 3 + 1] = g; row[x * 3 + 2] = r;
-            } else if (fb_bpp == 16) {
+            if (fb_bpp == 16) {
                 uint16_t v = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
                 row[x * 2 + 0] = (uint8_t)(v & 0xFF); row[x * 2 + 1] = (uint8_t)(v >> 8);
             } else if (fb_bpp == 15) {
@@ -360,11 +388,13 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     myfs_mount("ata1");
     idt_init();
     pic_init();
-    pit_init(100);
+    pit_init(1000);
     pic_unmask(0);
     pic_unmask(1);
     __asm__ volatile("sti");
     kprintf("IRQ: enabled\n");
+    sched_init();
+    sched_selftest();
     pci_init();
     asset_init(8, 16);
     ga_init();
@@ -382,7 +412,11 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     gfx_flush();
 
     con_puts("\nType 'help' for commands.\n");
-    shell_run();
+
+    /* the shell becomes a task; main/idle just halts and waits for interrupts */
+    int shell_tid = sched_spawn("shell", (void (*)(void *))shell_run, NULL, 32768);
+    sched_set_base_prio(shell_tid, PRIO_NORM);
+    for (;;) __asm__ volatile("hlt");
 
     draw_rect(10, 260, 300, 30, 0x007AFF);
     draw_string("Bootloader Ready.", 20, 268, 0xFFFFFF);
