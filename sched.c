@@ -10,6 +10,7 @@ static thread_t  threads[SCHED_MAX_THREADS];
 static thread_t *current;
 static uint64_t  boot_tick;
 static uint32_t  norm_counter;
+static void (*tss_updater)(uint64_t);
 
 static void cli(void) { __asm__ volatile("cli"); }
 static void sti(void) { __asm__ volatile("sti"); }
@@ -66,6 +67,10 @@ static void pick_and_switch(void) {
     thread_t *prev = current;
     current = best;
     current->slice_start = pit_ticks();
+    if (tss_updater) {
+        uint64_t top = best->stack_size ? (best->stack_base + best->stack_size) : 0;
+        tss_updater(top);
+    }
     ctx_switch(&prev->rsp, best->rsp);
 }
 
@@ -383,3 +388,5 @@ void sched_selftest(void) {
             (unsigned)dt, (unsigned)want, (dt >= lo && dt <= hi2) ? "PASS" : "FAIL");
     kprintf("--- SELFTEST DONE ---\n");
 }
+
+void sched_set_tss_updater(void (*fn)(uint64_t rsp0)) { tss_updater = fn; }

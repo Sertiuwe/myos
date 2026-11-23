@@ -5,6 +5,7 @@
 #include "pit.h"
 #include "rtc.h"
 #include "kstring.h"
+#include "kstdio.h"
 
 extern int myfs_read_inode_raw(uint16_t ino, myfs_inode_t *out);
 
@@ -211,6 +212,17 @@ int64_t sys_dispatch(uint32_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         out->hour = rt.hour; out->min = rt.min; out->sec = rt.sec;
         return SL_OK;
     }
+    case SYS_EXIT: {
+        extern void kernel_user_exit(int code);
+        kernel_user_exit((int)a1);
+        return SL_OK;   /* not reached */
+    }
+    case SYS_KPRINT: {
+        const char *msg = (const char *)(uintptr_t)a1;
+        if (!msg) return SL_EINVAL;
+        kprintf("%s", msg);
+        return SL_OK;
+    }
     case SYS_STATS: {
         int idx = (int)a1;
         sl_sysstat_t *out = (sl_sysstat_t *)(uintptr_t)a2;
@@ -236,7 +248,8 @@ const char *sys_name(uint32_t num) {
         [SYS_UPTIME_MS] = "uptime_ms", [SYS_SLEEP_MS] = "sleep_ms",
         [SYS_YIELD] = "yield",     [SYS_TID] = "tid",
         [SYS_TASKNAME] = "taskname", [SYS_DATETIME] = "datetime",
-        [SYS_STATS] = "stats",
+        [SYS_STATS] = "stats",     [SYS_KPRINT] = "kprint",
+        [SYS_EXIT] = "exit",
     };
     if (num > SYS_MAX || !names[num]) return "?";
     return names[num];

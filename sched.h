@@ -69,4 +69,5 @@ void kmutex_init(kmutex_t *m);
 void kmutex_lock(kmutex_t *m);
 void kmutex_unlock(kmutex_t *m);
 
+void sched_set_tss_updater(void (*fn)(uint64_t rsp0));
 #endif

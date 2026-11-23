@@ -3,7 +3,14 @@
 #include "asset.h"
 #include "kstring.h"
 #include "kstdio.h"
-#include "kstdlib.h"
+
+
+
+static unsigned parse_u_simple(const char *s) {
+    unsigned v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (unsigned)(*s - '0'); s++; }
+    return v;
+}
 
 #define CFG_PATH "/config.conf"
 
@@ -45,7 +52,7 @@ int config_load(void) {
                 } else if (!strcmp(p, "grid"))          cur.grid = (v[0] == '1');
                 else if (!strcmp(p, "shadow"))         cur.shadow = (v[0] == '1');
                 else if (!strcmp(p, "clock"))          cur.clock = (v[0] == '1');
-                else if (!strcmp(p, "dblclick_ms"))    cur.dblclick_ms = (uint32_t)parse_u(v, NULL);
+                else if (!strcmp(p, "dblclick_ms"))    cur.dblclick_ms = (uint32_t)parse_u_simple(v);
             }
         }
         if (!eol) break;

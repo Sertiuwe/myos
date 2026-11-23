@@ -43,6 +43,13 @@ _start:
     int 0x13
     jc disk_error
 
+    ; kernel часть 3: 128 секторов, LBA 289 -> 0x40000
+    mov si, dap_k3
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc disk_error
+
     jmp 0x0800:0x0000
 
 disk_error:
@@ -90,6 +97,13 @@ dap_k2:
     dw 0x0000
     dw 0x3000
     dq 161
+
+dap_k3:
+    db 16, 0
+    dw 128
+    dw 0x0000
+    dw 0x4000
+    dq 289
 
 times 510 - ($ - $$) db 0
 dw 0xAA55

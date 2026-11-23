@@ -5,6 +5,8 @@
 #include "asset.h"
 #include "graphic_api.h"
 #include "sched.h"
+#include "elfload.h"
+extern void kernel_syscall_init(void);
 #include "con.h"
 #include "memmap.h"
 #include "shell.h"
@@ -393,8 +395,10 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     pic_unmask(1);
     __asm__ volatile("sti");
     kprintf("IRQ: enabled\n");
+    kernel_syscall_init();
     sched_init();
     sched_selftest();
+    elf_install_demo();
     pci_init();
     asset_init(8, 16);
     ga_init();

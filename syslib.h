@@ -28,4 +28,6 @@ int      sl_task_name(char *buf, uint32_t sz);
 int      sl_datetime(sl_datetime_t *out);
 int      sl_sysstat(int idx, sl_sysstat_t *out);
 
+int  sl_kprint(const char *s);
+void sl_exit(int code);
 #endif

@@ -4,8 +4,8 @@ NASM    = nasm
 CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=small -O2 -mgeneral-regs-only -fno-asynchronous-unwind-tables -Wall -Wextra -I.
 LDFLAGS = -T linker.ld -nostdlib -static
 
-KZONE   = 131072
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o graphic_server.o app_demo.o myfsapp.o sched.o sched_switch.o fslock.o term.o syscall.o syslib.o config.o
+KZONE   = 196608
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o graphic_server.o app_demo.o myfsapp.o sched.o sched_switch.o fslock.o term.o syscall.o syslib.o config.o syscall_entry.o kernel.o elfload.o app_blob.o
 
 all: os.img
 
@@ -162,3 +162,22 @@ syslib.o: syslib.c syslib.h syscall.h
 
 config.o: config.c config.h syslib.h asset.h kstring.h kstdio.h kstdlib.h
 	$(CC) $(CFLAGS) -c config.c -o config.o
+
+kernel.o: kernel.c kstdio.h memory.h syscall.h
+	$(CC) $(CFLAGS) -c kernel.c -o kernel.o
+
+syscall_entry.o: syscall_entry.asm
+	nasm -f elf64 syscall_entry.asm -o syscall_entry.o
+
+app.elf: hello_app.c myos_app.h app.ld
+	$(CC) $(CFLAGS) -c hello_app.c -o hello_app.o
+	ld.lld -T app.ld -nostdlib -static -o app.elf hello_app.o
+
+app_blob.c: app.elf mkblob.py
+	python3 mkblob.py app.elf app_blob.c app_blob
+
+app_blob.o: app_blob.c
+	$(CC) $(CFLAGS) -c app_blob.c -o app_blob.o
+
+elfload.o: elfload.c elfload.h syslib.h syscall.h sched.h memory.h kstring.h kstdio.h
+	$(CC) $(CFLAGS) -c elfload.c -o elfload.o

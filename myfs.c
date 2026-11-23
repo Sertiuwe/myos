@@ -197,7 +197,8 @@ static int dir_lookup(uint16_t dir_ino, const char *name, uint16_t *out_ino, uin
     while (pos < din.size) {
         dirent_hdr_t hdr;
         if (myfs_read(dir_ino, pos, &hdr, sizeof(hdr)) != sizeof(hdr)) break;
-        if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+        if (hdr.ino == 0)     { pos += (uint32_t)sizeof(hdr) + hdr.namelen; continue; }
+        if (hdr.namelen == 0) { pos += (uint32_t)sizeof(hdr); continue; }
         char ename[256];
         if (myfs_read(dir_ino, pos + sizeof(hdr), ename, hdr.namelen) != (int)hdr.namelen) break;
         ename[hdr.namelen] = '\0';
@@ -218,10 +219,27 @@ static int dir_add_entry(uint16_t dir_ino, const char *name, uint16_t ino, uint8
     hdr.namelen = (uint8_t)strlen(name);
     myfs_inode_t din;
     if (read_inode(dir_ino, &din)) return -1;
-    uint32_t pos = din.size;
+
+    /* reuse a free slot (ino==0) that fits */
+    uint32_t pos = 0, slot = 0xFFFFFFFFu;
+    while (pos < din.size) {
+        dirent_hdr_t h;
+        if (myfs_read(dir_ino, pos, &h, sizeof(h)) != (int)sizeof(h)) break;
+        if (h.ino == 0 && h.namelen >= hdr.namelen) { slot = pos; break; }
+        if (h.namelen == 0) { pos += (uint32_t)sizeof(h); continue; }
+        pos += (uint32_t)sizeof(h) + h.namelen;
+    }
+    if (slot != 0xFFFFFFFFu) {
+        if (myfs_write(dir_ino, slot, &hdr, sizeof(hdr)) < 0) return -1;
+        if (myfs_write(dir_ino, slot + sizeof(hdr), name, hdr.namelen) < 0) return -1;
+        return 0;
+    }
+
+    pos = din.size;
     if (myfs_write(dir_ino, pos, &hdr, sizeof(hdr)) < 0) return -1;
     if (myfs_write(dir_ino, pos + sizeof(hdr), name, hdr.namelen) < 0) return -1;
-    return 0;
+    din.size = pos + (uint32_t)sizeof(hdr) + hdr.namelen;   /* the missing update */
+    return write_inode(dir_ino, &din);
 }
 
 static int resolve_path(const char *path, uint16_t *out_ino, uint8_t *out_type) {
@@ -369,12 +387,13 @@ int myfs_unlink(const char *path) {
     while (pos < din.size) {
         dirent_hdr_t hdr;
         if (myfs_read(dir_ino, pos, &hdr, sizeof(hdr)) != sizeof(hdr)) break;
-        if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+        if (hdr.ino == 0)     { pos += (uint32_t)sizeof(hdr) + hdr.namelen; continue; }
+        if (hdr.namelen == 0) { pos += (uint32_t)sizeof(hdr); continue; }
         char ename[256];
         myfs_read(dir_ino, pos + sizeof(hdr), ename, hdr.namelen);
         ename[hdr.namelen] = '\0';
         if (strcmp(ename, name) == 0 && hdr.ino == ino) {
-            hdr.namelen = 0; hdr.ino = 0;
+            hdr.ino = 0; hdr.ino = 0;
             myfs_write(dir_ino, pos, &hdr, sizeof(hdr));
             break;
         }
@@ -391,7 +410,8 @@ int myfs_readdir(uint16_t dir_ino, int idx, char *name, size_t namesz, uint16_t 
     while (pos < din.size) {
         dirent_hdr_t hdr;
         if (myfs_read(dir_ino, pos, &hdr, sizeof(hdr)) != sizeof(hdr)) break;
-        if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+        if (hdr.ino == 0)     { pos += (uint32_t)sizeof(hdr) + hdr.namelen; continue; }
+        if (hdr.namelen == 0) { pos += (uint32_t)sizeof(hdr); continue; }
         if (cur_idx == idx) {
             size_t copy = hdr.namelen < namesz - 1 ? hdr.namelen : namesz - 1;
             myfs_read(dir_ino, pos + sizeof(hdr), name, (uint32_t)copy);
@@ -458,11 +478,12 @@ int myfs_rename(const char *oldpath, const char *newpath) {
         while (pos < din.size) {
             dirent_hdr_t hdr;
             if (myfs_read(new_dir_ino, pos, &hdr, sizeof(hdr)) != (int)sizeof(hdr)) break;
-            if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+            if (hdr.ino == 0)     { pos += (uint32_t)sizeof(hdr) + hdr.namelen; continue; }
+        if (hdr.namelen == 0) { pos += (uint32_t)sizeof(hdr); continue; }
             char ename[256]; myfs_read(new_dir_ino, pos+sizeof(hdr), ename, hdr.namelen);
             ename[hdr.namelen] = '\0';
             if (strcmp(ename, name) == 0 && hdr.ino == exist_ino) {
-                hdr.namelen = 0; hdr.ino = 0;
+                hdr.ino = 0; hdr.ino = 0;
                 myfs_write(new_dir_ino, pos, &hdr, sizeof(hdr)); break;
             }
             pos += sizeof(hdr) + hdr.namelen;
@@ -486,11 +507,12 @@ int myfs_rename(const char *oldpath, const char *newpath) {
     while (pos < odin.size) {
         dirent_hdr_t hdr;
         if (myfs_read(old_dir_ino, pos, &hdr, sizeof(hdr)) != (int)sizeof(hdr)) break;
-        if (hdr.namelen == 0) { pos += sizeof(hdr); continue; }
+        if (hdr.ino == 0)     { pos += (uint32_t)sizeof(hdr) + hdr.namelen; continue; }
+        if (hdr.namelen == 0) { pos += (uint32_t)sizeof(hdr); continue; }
         char ename[256]; myfs_read(old_dir_ino, pos+sizeof(hdr), ename, hdr.namelen);
         ename[hdr.namelen] = '\0';
         if (strcmp(ename, old_name) == 0 && hdr.ino == old_ino) {
-            hdr.namelen = 0; hdr.ino = 0;
+            hdr.ino = 0; hdr.ino = 0;
             myfs_write(old_dir_ino, pos, &hdr, sizeof(hdr)); break;
         }
         pos += sizeof(hdr) + hdr.namelen;

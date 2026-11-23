@@ -22,6 +22,12 @@
 #include "sched.h"
 #include "term.h"
 #include "config.h"
+#include "elfload.h"
+#include "syslib.h"
+
+extern void kernel_init_ring3(void);
+extern void kernel_ring3_diag(void);
+extern void kernel_switch_to_user_mode(void);
 #include "pci.h"
 #include <stdint.h>
 
@@ -61,7 +67,7 @@ static uint64_t parse_u(const char *s) {
 static const char *skipsp(const char *s) { while (*s == ' ') s++; return s; }
 
 static void cmd_help(void) {
-    con_puts("commands: help mouse theme guitest gui files term ps lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
+    con_puts("commands: help mouse theme guitest gui files term ps testring3 lspci testfault uptime sleep <ms> ls cat touch write rm mkdir rename sync clear heap mem sysinfo date atastat bcstat disk blk blktest echo alloc free slots history reboot\n");
 }
 static void cmd_alloc(const char *a) {
     uint64_t n = parse_u(skipsp(a));
@@ -447,6 +453,20 @@ static void cmd_gui(void)  { enter_gui(0); }
 static void cmd_files(void) { enter_gui(1); }
 static void cmd_term(void)  { enter_gui(2); }
 
+static void cmd_elfinstall(void) {
+    extern int elf_install_demo(void);
+    sl_unlink("/hello.elf");
+    elf_install_demo();
+}
+
+static void cmd_elfinfo(const char *arg) {
+    elf_info(arg[0] ? arg : "/hello.elf");
+}
+
+static void cmd_runelf(const char *arg) {
+    elf_run(arg[0] ? arg : "/hello.elf");
+}
+
 static void cmd_ps(void) {
     kprintf("  id name                 state     pr cpu_ticks  boost/demote\n");
     static const char *sn[] = { "DEAD", "READY", "RUNNING", "BLOCKED" };
@@ -457,6 +477,16 @@ static void cmd_ps(void) {
                 sched_eff_prio_tid(t->id), (unsigned)t->cpu_ticks,
                 (unsigned)t->boosts, (unsigned)t->demotes);
     }
+}
+
+static void cmd_ring3diag(void) {
+    kernel_ring3_diag();
+}
+
+extern void kernel_user_demo(void);
+
+static void cmd_testring3(void) {
+    kernel_user_demo();
 }
 
 static void cmd_sysinfo(void) {
@@ -515,6 +545,11 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "files")) cmd_files();
     else if (!strcmp(cmd, "ps")) cmd_ps();
     else if (!strcmp(cmd, "term")) cmd_term();
+    else if (!strcmp(cmd, "testring3")) cmd_testring3();
+    else if (!strcmp(cmd, "ring3diag")) cmd_ring3diag();
+    else if (!strcmp(cmd, "elfinstall")) cmd_elfinstall();
+    else if (!strcmp(cmd, "elfinfo")) cmd_elfinfo(arg);
+    else if (!strcmp(cmd, "runelf")) cmd_runelf(arg);
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
     else if (!strcmp(cmd, "disk")) cmd_disk();
     else if (!strcmp(cmd, "blk")) cmd_blk(arg);

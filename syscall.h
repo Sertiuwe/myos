@@ -26,7 +26,9 @@
 #define SYS_TASKNAME  17
 #define SYS_DATETIME  18
 #define SYS_STATS     19
-#define SYS_MAX       19
+#define SYS_KPRINT    20
+#define SYS_EXIT      21
+#define SYS_MAX       21
 
 #define SL_O_READ   0x1
 #define SL_O_WRITE  0x2

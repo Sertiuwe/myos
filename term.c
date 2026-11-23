@@ -12,6 +12,13 @@
 #include "kstring.h"
 #include "kstdio.h"
 
+
+static int parse_int(const char *s) {
+    int v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return v;
+}
+
 #define TERM_COLS   160
 #define TERM_MAXL   512
 #define TERM_INST   2
@@ -217,7 +224,7 @@ static void term_exec(term_t *t, const char *line) {
         char *sp2 = strchr(arg, ' ');
         if (!sp2) { tput(t, th->danger, "usage: set <grid|shadow|clock|dblclick_ms> <v>\n"); return; }
         *sp2 = 0;
-        int v = (int)parse_u(sp2 + 1, NULL);
+        int v = (int)parse_int(sp2 + 1);
         if (config_set_int(arg, v)) { tput(t, th->danger, "unknown key\n"); return; }
         os_config_t *c = config_get();
         gs_set_options(c->grid, c->shadow, c->clock);
