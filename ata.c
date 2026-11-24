@@ -1,4 +1,8 @@
 #include "ata.h"
+#include "dma.h"
+
+static int dma_ok;
+static uint32_t dma_reads_total, dma_fallbacks_total;
 #include "bdev.h"
 #include "kstdio.h"
 #include "kstring.h"
@@ -139,6 +143,20 @@ static int ata_transfer(struct ata_dev *d, uint64_t lba, uint32_t count,
     while (count) {
         uint32_t n = count > 256 ? 256 : count;
 
+        /* DMA fast path (read only). Any failure falls through to the
+           untouched PIO code below. */
+        if (!write && dma_ok && lba <= 0x0FFFFFFFULL) {
+            uint32_t dn = n > 255 ? 255 : n;
+            if (dma_ata_read(d->dev, (uint32_t)lba, (uint8_t)dn, p) == 0) {
+                dma_reads_total++;
+                d->reads++;
+                d->bytes_r += (uint64_t)dn * 512;
+                lba += dn; count -= dn; p += (size_t)dn * 512;
+                continue;
+            }
+            dma_fallbacks_total++;
+        }
+
         /* LBA48: выбираем устройство с битом LBA=1 */
         outb(d->io + REG_DEV, (uint8_t)(0xE0 | (d->dev << 4)));
         ata_delay(d);
@@ -200,6 +218,17 @@ static int ata_bread(bdev_t *b, uint64_t lba, uint32_t c, void *buf) {
 }
 static int ata_bwrite(bdev_t *b, uint64_t lba, uint32_t c, const void *buf) {
     return ata_transfer((struct ata_dev *)b->priv, lba, c, (void *)buf, 1);
+}
+
+
+void ata_dma_enable(void) {
+    dma_ok = (dma_ata_bm_init(NULL) == 0);
+    kprintf("ATA: DMA %s\n", dma_ok ? "enabled (read path)" : "unavailable, PIO only");
+}
+
+void ata_dma_stats(uint32_t *reads, uint32_t *fb) {
+    if (reads) *reads = dma_reads_total;
+    if (fb)    *fb    = dma_fallbacks_total;
 }
 
 static struct ata_dev devs[2];

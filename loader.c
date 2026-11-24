@@ -400,6 +400,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     sched_selftest();
     elf_install_demo();
     pci_init();
+    ata_dma_enable();
     asset_init(8, 16);
     ga_init();
     kprintf("GA: font %ux%u (%s coords)\n",

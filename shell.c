@@ -25,6 +25,7 @@
 #include "elfload.h"
 #include "syslib.h"
 #include "dma.h"
+#include "ata.h"
 
 extern void kernel_init_ring3(void);
 extern void kernel_ring3_diag(void);
@@ -472,6 +473,12 @@ static void cmd_dmatest(void){ dma_selftest(); }
 
 static void cmd_dmabench(void){ dma_bench(); }
 
+static void cmd_dmastat(void) {
+    uint32_t r = 0, f = 0;
+    ata_dma_stats(&r, &f);
+    kprintf("ATA DMA: reads=%u  fallbacks=%u\n", (unsigned)r, (unsigned)f);
+}
+
 static void cmd_dmabm(void) {
     uint16_t base = 0;
     if (dma_ata_bm_init(&base) == 0) dma_ata_bm_dump();
@@ -561,6 +568,7 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "dmatest")) cmd_dmatest();
     else if (!strcmp(cmd, "dmabm")) cmd_dmabm();
     else if (!strcmp(cmd, "dmabench")) cmd_dmabench();
+    else if (!strcmp(cmd, "dmastat")) cmd_dmastat();
     else if (!strcmp(cmd, "elfinfo")) cmd_elfinfo(arg);
     else if (!strcmp(cmd, "runelf")) cmd_runelf(arg);
     else if (!strcmp(cmd, "atastat")) cmd_atastat();

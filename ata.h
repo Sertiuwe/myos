@@ -19,4 +19,6 @@ void ata_init(void);
 int  ata_get_info(int idx, ata_info_t *out);
 int  ata_count(void);
 
+void ata_dma_enable(void);
+void ata_dma_stats(uint32_t *reads, uint32_t *fb);
 #endif
