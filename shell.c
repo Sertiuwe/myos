@@ -470,6 +470,13 @@ static void cmd_runelf(const char *arg) {
 
 static void cmd_dmatest(void){ dma_selftest(); }
 
+static void cmd_dmabench(void){ dma_bench(); }
+
+static void cmd_dmabm(void) {
+    uint16_t base = 0;
+    if (dma_ata_bm_init(&base) == 0) dma_ata_bm_dump();
+}
+
 static void cmd_ps(void) {
     kprintf("  id name                 state     pr cpu_ticks  boost/demote\n");
     static const char *sn[] = { "DEAD", "READY", "RUNNING", "BLOCKED" };
@@ -552,6 +559,8 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "ring3diag")) cmd_ring3diag();
     else if (!strcmp(cmd, "elfinstall")) cmd_elfinstall();
     else if (!strcmp(cmd, "dmatest")) cmd_dmatest();
+    else if (!strcmp(cmd, "dmabm")) cmd_dmabm();
+    else if (!strcmp(cmd, "dmabench")) cmd_dmabench();
     else if (!strcmp(cmd, "elfinfo")) cmd_elfinfo(arg);
     else if (!strcmp(cmd, "runelf")) cmd_runelf(arg);
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
