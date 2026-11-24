@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "kstdio.h"
 #include "kstring.h"
 
 #define HEAP_SIZE   (8u * 1024u * 1024u)
@@ -147,6 +148,7 @@ static void bin_del(block_t *b) {
     st.free_bytes -= bsize(b);
 }
 
+
 void kinit_heap(void) {
     capacity = (HEAP_SIZE - 2 * HDR) & ~(size_t)(ALIGN - 1);
     first_blk = (block_t *)heap;
@@ -166,6 +168,7 @@ void kinit_heap(void) {
     st.total_bytes = HEAP_SIZE;
     bin_add(first_blk);
     ready = 1;
+
 }
 
 static block_t *find_free(size_t size) {

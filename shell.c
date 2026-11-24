@@ -24,6 +24,7 @@
 #include "config.h"
 #include "elfload.h"
 #include "syslib.h"
+#include "dma.h"
 
 extern void kernel_init_ring3(void);
 extern void kernel_ring3_diag(void);
@@ -467,6 +468,8 @@ static void cmd_runelf(const char *arg) {
     elf_run(arg[0] ? arg : "/hello.elf");
 }
 
+static void cmd_dmatest(void){ dma_selftest(); }
+
 static void cmd_ps(void) {
     kprintf("  id name                 state     pr cpu_ticks  boost/demote\n");
     static const char *sn[] = { "DEAD", "READY", "RUNNING", "BLOCKED" };
@@ -548,6 +551,7 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "testring3")) cmd_testring3();
     else if (!strcmp(cmd, "ring3diag")) cmd_ring3diag();
     else if (!strcmp(cmd, "elfinstall")) cmd_elfinstall();
+    else if (!strcmp(cmd, "dmatest")) cmd_dmatest();
     else if (!strcmp(cmd, "elfinfo")) cmd_elfinfo(arg);
     else if (!strcmp(cmd, "runelf")) cmd_runelf(arg);
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
