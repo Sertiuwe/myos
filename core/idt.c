@@ -1,4 +1,6 @@
 #include "idt.h"
+#include "sxnl.h"
+#include "sched.h"
 #include "kstdio.h"
 #include <stdint.h>
 
@@ -75,6 +77,15 @@ static const char *exc_names[] = {
 void exception_handler(uint64_t vec, uint64_t err_code,
                        uint64_t rip, uint64_t rsp, uint64_t rbp,
                        uint64_t cr2_val) {
+    /* Sxnl policy: ring3 offender dies alone; kernel fault panics with report */
+    int user_mode = (rip >= 0x2000000ULL && rip < 0x4000000ULL);
+    int act = sxnl_fault(vec, (vec == 14) ? cr2_val : rip, user_mode);
+    if (user_mode && act == SXNL_ACT_KILL) {
+        kprintf("SXNL: ring3 exception vec=%u in '%s' -> terminating thread only\n",
+                (unsigned)vec, sched_current_name());
+        sched_exit();   /* never returns: only the offending thread dies */
+    }
+
     kprintf("\n*** EXCEPTION ***\n");
     if (vec < 32)
         kprintf("Vector: %u (%s)\n", (unsigned)vec, exc_names[vec]);

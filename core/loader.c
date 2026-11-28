@@ -1,3 +1,4 @@
+#include "fblock.h"
 #include <stdint.h>
 #include "memory.h"
 #include "kstring.h"
@@ -216,6 +217,7 @@ uint8_t gfx_bpp_val(void) { return (uint8_t)fb_bpp; }
 void gfx_draw_char(char c, int x, int y, uint32_t col) { draw_char(c, x, y, col); }
 
 void gfx_flush_rows(uint32_t y0, uint32_t y1) {
+    fb_lock();
     if (y1 > fb_height) y1 = fb_height;
     if (y0 >= y1) return;
     // Копируем back_buffer в реальный фреймбуфер с учётом настоящей глубины цвета.
@@ -248,19 +250,25 @@ void gfx_flush_rows(uint32_t y0, uint32_t y1) {
             }
         }
     }
+    fb_unlock();
 }
 
-void gfx_flush(void) { gfx_flush_rows(0, fb_height); }
+void gfx_flush(void) {
+    fb_lock(); gfx_flush_rows(0, fb_height);     fb_unlock();
+}
 
 void gfx_clear_all(uint32_t col) {
+    fb_lock();
     uint64_t n = (uint64_t)fb_width * fb_height;
     for (uint64_t i = 0; i < n; i++) back_buffer[i] = col;
     gfx_flush();
+    fb_unlock();
 }
 
 /* Partial flush: converts only the requested rectangle. Same bpp logic as
    gfx_flush_rows, but bounded in X too -- the compositor needs cheap updates. */
 void gfx_flush_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h) {
+    fb_lock();
     if (x0 >= fb_width || y0 >= fb_height || !w || !h) return;
     if (x0 + w > fb_width)  w = fb_width  - x0;
     if (y0 + h > fb_height) h = fb_height - y0;
@@ -307,6 +315,7 @@ void gfx_flush_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h) {
             }
         }
     }
+    fb_unlock();
 }
 
 
@@ -356,7 +365,8 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     }
 
     draw_rect(0, 0, fb_width, fb_height, 0x1E1E1E);
-    draw_string("MyOS Bootloader", 10, 10, 0xFFFFFF);
+    draw_string("XNL Bootloader", 10, 10, 0xFFFFFF);
+    draw_string("Sxnl Security X, Not Linux", 10, 26, 0x66FF99);
     draw_string("----------------", 10, 26, 0x888888);
     check_cpu();
 
@@ -388,6 +398,7 @@ __attribute__((section(".text.entry"))) void loader_main(struct boot_info *binfo
     ata_init();
     bcache_init();
     myfs_mount("ata1");
+    myfs_mount_vol("ata0", 2048, "/os");
     idt_init();
     pic_init();
     pit_init(1000);

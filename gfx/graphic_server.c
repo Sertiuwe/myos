@@ -1,4 +1,5 @@
 #include "graphic_server.h"
+#include "config.h"
 #include "gfx.h"
 #include "mouse.h"
 #include "kbd.h"
@@ -215,7 +216,7 @@ static void paint_taskbar(void) {
     ga_rect_t tb = taskbar_rect();
     ga_grad_v(tb, ga_mix(t->win_bg, 0xFFFFFF, 22), t->win_bg);
     ga_hline(tb.x, tb.y, tb.w, ga_mix(t->win_border, t->accent, 80));
-    ga_text(tb.x + 8, tb.y + (tb.h - (int32_t)ga_font_h()) / 2, "MyOS", t->accent);
+    ga_text(tb.x + 8, tb.y + (tb.h - (int32_t)ga_font_h()) / 2, "XNL", t->accent);
 
     if (launcher_fn) {
         ga_rect_t lb = tb_launch_rect();
@@ -451,6 +452,13 @@ static void gs_input_wake(void) {
 }
 
 static void gs_win_thread(void *arg) {
+    config_load();
+    {
+        os_config_t *c = config_get();
+        opt_grid = c->grid; opt_shadow = c->shadow;
+        opt_clock = c->clock; opt_dbl_ms = c->dblclick_ms;
+    }
+
     gs_window_t *w = arg;
     sched_set_base_prio(sched_current_id(), PRIO_NORM);
     for (;;) {

@@ -1,3 +1,4 @@
+#include "fblock.h"
 #include "con.h"
 #include "gfx.h"
 #include "kstring.h"
@@ -13,9 +14,11 @@ static void dirty(uint32_t y) {
 }
 
 static void flush_dirty(void) {
+    fb_lock();
     if (d1 > ry1) d1 = ry1;
     if (d0 < d1) gfx_flush_rows(d0, d1);
     d0 = ry1; d1 = ry0;
+    fb_unlock();
 }
 
 void con_set_color(uint32_t c) { fg = c; }

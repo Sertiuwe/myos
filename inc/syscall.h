@@ -28,7 +28,12 @@
 #define SYS_STATS     19
 #define SYS_KPRINT    20
 #define SYS_EXIT      21
-#define SYS_MAX       21
+#define SYS_GA_OPEN   22
+#define SYS_GA_CMD    23
+#define SYS_GA_EVENT  24
+#define SYS_GA_PRESENT 25
+#define SYS_GA_CLOSE  26
+#define SYS_MAX       26
 
 #define SL_O_READ   0x1
 #define SL_O_WRITE  0x2

@@ -1,3 +1,4 @@
+#include "sxnl.h"
 #include "shell.h"
 #include "con.h"
 #include "kbd.h"
@@ -25,6 +26,7 @@
 #include "elfload.h"
 #include "syslib.h"
 #include "dma.h"
+#include "osdisk.h"
 #include "ata.h"
 
 extern void kernel_init_ring3(void);
@@ -418,7 +420,15 @@ static void cmd_guitest(void) {
 static volatile int gui_done;
 static char gui_done_chan;
 
+static void paint_thread(void *arg) { (void)arg; elf_run("/gui.elf"); sched_exit(); }
+static void cmd_schedstat(void) { sched_dump(); }
+static void cmd_sxnl(void) { sxnl_dump(); }
+
+static void launch_paint(void) { sched_spawn("paint", paint_thread, NULL, 65536); }
+
 static void gui_thread(void *arg) {
+    sched_set_base_prio(sched_current_id(), PRIO_HI);
+    sched_set_foreground(sched_current_id());
     int mode = (int)(intptr_t)arg;
     cursor_reset();
     gs_init();
@@ -430,6 +440,7 @@ static void gui_thread(void *arg) {
     gs_desktop_add("Files", ASSET_ICO_FOLDER, myfsapp_open);
     gs_desktop_add("Term", ASSET_ICO_TERMINAL, term_open);
     gs_desktop_add("System", ASSET_ICO_DISK, app_demo_about);
+    gs_desktop_add("Paint", ASSET_ICO_TERMINAL, launch_paint);
     gs_set_launcher(myfsapp_open);
     myfsapp_open();
     if (mode == 0) app_demo_about();
@@ -472,6 +483,38 @@ static void cmd_runelf(const char *arg) {
 static void cmd_dmatest(void){ dma_selftest(); }
 
 static void cmd_dmabench(void){ dma_bench(); }
+
+static void cmd_conf(const char *arg) {
+    os_config_t *c = config_get();
+    if (!arg || !arg[0]) {
+        kprintf("config: %s\n", config_path());
+        kprintf("  theme=%s\n  grid=%d\n  shadow=%d\n  clock=%d\n  dblclick_ms=%u\n",
+                c->theme, c->grid, c->shadow, c->clock, (unsigned)c->dblclick_ms);
+        return;
+    }
+    if (!strcmp(arg, "save")) { kprintf("conf: %s\n", config_save()==0?"saved":"FAILED"); return; }
+    if (!strncmp(arg, "theme ", 6)) {
+        if (config_set_theme(arg+6)==0) { gs_invalidate_all(); kprintf("conf: theme=%s\n", arg+6); }
+        else kprintf("conf: unknown theme\n");
+        return;
+    }
+    if (!strncmp(arg, "set ", 4)) {
+        const char *kv = arg+4;
+        char key[24]={0}; int ki=0;
+        while (*kv && *kv!=' ' && ki<23) key[ki++]=*kv++;
+        while (*kv==' ') kv++;
+        int v = 0; while (*kv>='0'&&*kv<='9') { v=v*10+(*kv-'0'); kv++; }
+        if (config_set_int(key, v)==0) {
+            os_config_t *n = config_get();
+            gs_set_options(n->grid, n->shadow, n->clock);
+            gs_set_dblclick_ms(n->dblclick_ms);
+            gs_invalidate_all();
+            kprintf("conf: %s=%d\n", key, v);
+        } else kprintf("conf: unknown key '%s'\n", key);
+        return;
+    }
+    kprintf("usage: conf | conf save | conf theme <name> | conf set <key> <val>\n");
+}
 
 static void cmd_dmastat(void) {
     uint32_t r = 0, f = 0;
@@ -569,6 +612,11 @@ static void dispatch(char *cmd) {
     else if (!strcmp(cmd, "dmabm")) cmd_dmabm();
     else if (!strcmp(cmd, "dmabench")) cmd_dmabench();
     else if (!strcmp(cmd, "dmastat")) cmd_dmastat();
+    else if (!strcmp(cmd, "conf")) cmd_conf(arg);
+    else if (!strcmp(cmd, "schedstat")) cmd_schedstat();
+    else if (!strcmp(cmd, "sxnl")) cmd_sxnl();
+    else if (!strcmp(cmd, "osdisk")) osdisk_info();
+    else if (!strcmp(cmd, "oshex")) osdisk_cmd(arg);
     else if (!strcmp(cmd, "elfinfo")) cmd_elfinfo(arg);
     else if (!strcmp(cmd, "runelf")) cmd_runelf(arg);
     else if (!strcmp(cmd, "atastat")) cmd_atastat();
@@ -587,7 +635,7 @@ static void dispatch(char *cmd) {
 
 void shell_run(void) {
     line_init();
-    con_puts("myos> ");
+    con_puts("xnl> ");
     for (;;) {
         /* Обновляем курсор мыши каждый цикл */
         {
@@ -601,7 +649,7 @@ void shell_run(void) {
             con_putc('\n'); con_flush();
             dispatch(line);
             len = 0; line[0] = 0;
-            con_puts("myos> ");
+            con_puts("xnl> ");
         } else if (c == '\b') {
             if (len) { line_pop(); con_putc('\b'); con_flush(); }
         } else {

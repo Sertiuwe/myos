@@ -1,89 +1,89 @@
 CC      = clang
 LD      = ld.lld
 NASM    = nasm
-CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=small -O2 -mgeneral-regs-only -fno-asynchronous-unwind-tables -Wall -Wextra -I.
+CFLAGS  = --target=x86_64-unknown-none -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -mno-red-zone -mcmodel=small -O2 -mgeneral-regs-only -fno-asynchronous-unwind-tables -Wall -Wextra -I. -Iinc -Iapp
 LDFLAGS = -T linker.ld -nostdlib -static
 
 KZONE   = 196608
-OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o graphic_server.o app_demo.o myfsapp.o sched.o sched_switch.o fslock.o term.o syscall.o syslib.o config.o syscall_entry.o kernel.o elfload.o app_blob.o dma.o
+OBJS    = loader.o memory.o memtest.o kstring.o con.o memmap.o kbd.o shell.o kstdio.o kctype.o kstdlib.o kpanic.o bdev.o ata.o rtc.o bcache.o myfs.o idt.o isr_stubs.o pic.o pit.o irq.o pci.o mouse.o cursor.o asset.o graphic_api.o graphic_server.o app_demo.o myfsapp.o sched.o sched_switch.o fslock.o term.o syscall.o syslib.o config.o syscall_entry.o kernel.o elfload.o app_blob.o studio_blob.o gui_blob.o dma.o osdisk.o ga_remote.o fblock.o sxnl.o
 
 all: os.img
 
-boot.bin: boot.asm
-	$(NASM) -f bin boot.asm -o boot.bin
+boot.bin: boot/boot.asm
+	$(NASM) -f bin boot/boot.asm -o boot.bin
 
-stage2.bin: stage2.asm
-	$(NASM) -f bin stage2.asm -o stage2.bin
+stage2.bin: boot/stage2.asm
+	$(NASM) -f bin boot/stage2.asm -o stage2.bin
 	truncate -s 16384 stage2.bin
 
-loader.o: loader.c memory.h kstring.h
-	$(CC) $(CFLAGS) -c loader.c -o loader.o
+loader.o: core/loader.c inc/memory.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/loader.c -o loader.o
 
-memory.o: memory.c memory.h kstring.h
-	$(CC) $(CFLAGS) -c memory.c -o memory.o
+memory.o: mm/memory.c inc/memory.h inc/kstring.h
+	$(CC) $(CFLAGS) -c mm/memory.c -o memory.o
 
-memtest.o: memtest.c memory.h kstring.h
-	$(CC) $(CFLAGS) -c memtest.c -o memtest.o
+memtest.o: mm/memtest.c inc/memory.h inc/kstring.h
+	$(CC) $(CFLAGS) -c mm/memtest.c -o memtest.o
 
-kstring.o: kstring.c kstring.h
-	$(CC) $(CFLAGS) -c kstring.c -o kstring.o
+kstring.o: core/kstring.c inc/kstring.h
+	$(CC) $(CFLAGS) -c core/kstring.c -o kstring.o
 
-con.o: con.c con.h gfx.h kstring.h
-	$(CC) $(CFLAGS) -c con.c -o con.o
+con.o: core/con.c inc/con.h inc/gfx.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/con.c -o con.o
 
-memmap.o: memmap.c memmap.h memory.h con.h kstring.h
-	$(CC) $(CFLAGS) -c memmap.c -o memmap.o
+memmap.o: mm/memmap.c inc/memmap.h inc/memory.h inc/con.h inc/kstring.h
+	$(CC) $(CFLAGS) -c mm/memmap.c -o memmap.o
 
-kbd.o: kbd.c kbd.h
-	$(CC) $(CFLAGS) -c kbd.c -o kbd.o
+kbd.o: core/kbd.c inc/kbd.h
+	$(CC) $(CFLAGS) -c core/kbd.c -o kbd.o
 
-shell.o: shell.c shell.h con.h kbd.h memory.h memmap.h kstring.h
-	$(CC) $(CFLAGS) -c shell.c -o shell.o
+shell.o: core/shell.c inc/shell.h inc/con.h inc/kbd.h inc/memory.h inc/memmap.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/shell.c -o shell.o
 
-kstdio.o: kstdio.c kstdio.h kstring.h
-	$(CC) $(CFLAGS) -c kstdio.c -o kstdio.o
+kstdio.o: core/kstdio.c inc/kstdio.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/kstdio.c -o kstdio.o
 
-kctype.o: kctype.c kctype.h
-	$(CC) $(CFLAGS) -c kctype.c -o kctype.o
+kctype.o: core/kctype.c inc/kctype.h
+	$(CC) $(CFLAGS) -c core/kctype.c -o kctype.o
 
-kstdlib.o: kstdlib.c kstdlib.h kctype.h kerrno.h
-	$(CC) $(CFLAGS) -c kstdlib.c -o kstdlib.o
+kstdlib.o: core/kstdlib.c inc/kstdlib.h inc/kctype.h inc/kerrno.h
+	$(CC) $(CFLAGS) -c core/kstdlib.c -o kstdlib.o
 
-kpanic.o: kpanic.c kpanic.h kstdio.h
-	$(CC) $(CFLAGS) -c kpanic.c -o kpanic.o
+kpanic.o: core/kpanic.c inc/kpanic.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/kpanic.c -o kpanic.o
 
-bdev.o: bdev.c bdev.h kstring.h
-	$(CC) $(CFLAGS) -c bdev.c -o bdev.o
+bdev.o: fs/bdev.c inc/bdev.h inc/kstring.h
+	$(CC) $(CFLAGS) -c fs/bdev.c -o bdev.o
 
-ata.o: ata.c ata.h bdev.h kstdio.h
-	$(CC) $(CFLAGS) -c ata.c -o ata.o
+ata.o: fs/ata.c inc/ata.h inc/bdev.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c fs/ata.c -o ata.o
 
-rtc.o: rtc.c rtc.h
-	$(CC) $(CFLAGS) -c rtc.c -o rtc.o
+rtc.o: core/rtc.c inc/rtc.h
+	$(CC) $(CFLAGS) -c core/rtc.c -o rtc.o
 
-bcache.o: bcache.c bcache.h bdev.h memory.h kstring.h
-	$(CC) $(CFLAGS) -c bcache.c -o bcache.o
+bcache.o: mm/bcache.c inc/bcache.h inc/bdev.h inc/memory.h inc/kstring.h
+	$(CC) $(CFLAGS) -c mm/bcache.c -o bcache.o
 
-myfs.o: myfs.c myfs.h bdev.h bcache.h memory.h kstring.h rtc.h kstdio.h
-	$(CC) $(CFLAGS) -c myfs.c -o myfs.o
+myfs.o: fs/myfs.c inc/myfs.h inc/bdev.h inc/bcache.h inc/memory.h inc/kstring.h inc/rtc.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c fs/myfs.c -o myfs.o
 
-idt.o: idt.c idt.h kstdio.h
-	$(CC) $(CFLAGS) -c idt.c -o idt.o
+idt.o: core/idt.c inc/idt.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/idt.c -o idt.o
 
-isr_stubs.o: isr_stubs.asm
-	$(NASM) -f elf64 isr_stubs.asm -o isr_stubs.o
+isr_stubs.o: core/isr_stubs.asm
+	$(NASM) -f elf64 core/isr_stubs.asm -o isr_stubs.o
 
-pic.o: pic.c pic.h
-	$(CC) $(CFLAGS) -c pic.c -o pic.o
+pic.o: core/pic.c inc/pic.h
+	$(CC) $(CFLAGS) -c core/pic.c -o pic.o
 
-pit.o: pit.c pit.h pic.h kstdio.h
-	$(CC) $(CFLAGS) -c pit.c -o pit.o
+pit.o: core/pit.c inc/pit.h inc/pic.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/pit.c -o pit.o
 
-irq.o: irq.c pic.h pit.h kstdio.h
-	$(CC) $(CFLAGS) -c irq.c -o irq.o
+irq.o: core/irq.c inc/pic.h inc/pit.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/irq.c -o irq.o
 
-pci.o: pci.c pci.h kstdio.h kstring.h
-	$(CC) $(CFLAGS) -c pci.c -o pci.o
+pci.o: core/pci.c inc/pci.h inc/kstdio.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/pci.c -o pci.o
 
 kernel.elf: $(OBJS) linker.ld
 	$(LD) $(LDFLAGS) -o kernel.elf $(OBJS)
@@ -92,15 +92,24 @@ kernel.bin: kernel.elf
 	objcopy -O binary kernel.elf kernel.bin
 	@sz=$$(stat -c %s kernel.bin); \
 	if [ $$sz -gt $(KZONE) ]; then \
-		echo "ERROR: kernel.bin = $$sz bytes > $(KZONE). Увеличь KZONE и секторы в boot.asm"; \
+		echo "ERROR: kernel.bin = $$sz bytes > $(KZONE). Увеличь KZONE и секторы в boot/boot.asm"; \
 		exit 1; \
 	fi; \
 	echo "kernel.bin = $$sz / $(KZONE) bytes"
 	truncate -s $(KZONE) kernel.bin
 
-os.img: boot.bin stage2.bin kernel.bin
-	cat boot.bin stage2.bin kernel.bin > os.img
-	truncate -s 1474560 os.img
+osboot.img: boot.bin stage2.bin kernel.bin
+	cat boot.bin stage2.bin kernel.bin > osboot.img
+	truncate -s 1048576 osboot.img
+
+osvol.img:
+	@if [ ! -f osvol.img ]; then \
+		truncate -s 7340032 osvol.img; \
+		python3 mkmyfs.py osvol.img --base 0 --blocks 14336; \
+	fi
+
+os.img: osboot.img osvol.img
+	cat osboot.img osvol.img > os.img
 
 fs.img:
 	@if [ ! -f fs.img ]; then truncate -s 8388608 fs.img; echo "created fs.img (8 MiB)"; fi
@@ -109,69 +118,80 @@ run: os.img fs.img
 	qemu-system-x86_64 -drive file=os.img,format=raw,if=ide,bus=0,unit=0 -drive file=fs.img,format=raw,if=ide,bus=0,unit=1 -vnc :1 -display none -serial stdio
 
 clean:
-	rm -f *.o *.bin *.elf os.img
+	rm -f *.o *.bin *.elf os.img osboot.img
 
 .PHONY: all clean run
 
-	$(CC) $(CFLAGS) -c mouse.c -o mouse.o
+	$(CC) $(CFLAGS) -c core/mouse.c -o mouse.o
 
-	$(CC) $(CFLAGS) -c cursor.c -o cursor.o
+	$(CC) $(CFLAGS) -c gfx/cursor.c -o cursor.o
 
-	$(CC) $(CFLAGS) -c mouse.c -o mouse.o
+	$(CC) $(CFLAGS) -c core/mouse.c -o mouse.o
 
-	$(CC) $(CFLAGS) -c cursor.c -o cursor.o
+	$(CC) $(CFLAGS) -c gfx/cursor.c -o cursor.o
 
-mouse.o: mouse.c mouse.h pic.h kstdio.h
-	$(CC) $(CFLAGS) -c mouse.c -o mouse.o
+mouse.o: core/mouse.c inc/mouse.h inc/pic.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/mouse.c -o mouse.o
 
-cursor.o: cursor.c cursor.h kstring.h
-	$(CC) $(CFLAGS) -c cursor.c -o cursor.o
+cursor.o: gfx/cursor.c inc/cursor.h inc/kstring.h
+	$(CC) $(CFLAGS) -c gfx/cursor.c -o cursor.o
 
-asset.o: asset.c asset.h kstring.h
-	$(CC) $(CFLAGS) -c asset.c -o asset.o
+asset.o: gfx/asset.c inc/asset.h inc/kstring.h
+	$(CC) $(CFLAGS) -c gfx/asset.c -o asset.o
 
-graphic_api.o: graphic_api.c graphic_api.h gfx.h asset.h kstring.h
-	$(CC) $(CFLAGS) -c graphic_api.c -o graphic_api.o
+graphic_api.o: gfx/graphic_api.c inc/graphic_api.h inc/gfx.h inc/asset.h inc/kstring.h
+	$(CC) $(CFLAGS) -c gfx/graphic_api.c -o graphic_api.o
 
-graphic_server.o: graphic_server.c graphic_server.h graphic_api.h gfx.h mouse.h kbd.h pit.h kstring.h
-	$(CC) $(CFLAGS) -c graphic_server.c -o graphic_server.o
+graphic_server.o: gfx/graphic_server.c inc/graphic_server.h inc/graphic_api.h inc/gfx.h inc/mouse.h inc/kbd.h inc/pit.h inc/kstring.h
+	$(CC) $(CFLAGS) -c gfx/graphic_server.c -o graphic_server.o
 
-app_demo.o: app_demo.c app_demo.h graphic_server.h asset.h pit.h kstdio.h kstring.h
-	$(CC) $(CFLAGS) -c app_demo.c -o app_demo.o
+app_demo.o: core/app_demo.c inc/app_demo.h inc/graphic_server.h inc/asset.h inc/pit.h inc/kstdio.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/app_demo.c -o app_demo.o
 
-myfsapp.o: myfsapp.c myfsapp.h graphic_server.h graphic_api.h asset.h myfs.h kstring.h kstdio.h pit.h
-	$(CC) $(CFLAGS) -c myfsapp.c -o myfsapp.o
+myfsapp.o: core/myfsapp.c inc/myfsapp.h inc/graphic_server.h inc/graphic_api.h inc/asset.h inc/myfs.h inc/kstring.h inc/kstdio.h inc/pit.h
+	$(CC) $(CFLAGS) -c core/myfsapp.c -o myfsapp.o
 
-sched.o: sched.c sched.h pit.h kstring.h kstdio.h
-	$(CC) $(CFLAGS) -c sched.c -o sched.o
+sched.o: core/sched.c inc/sched.h inc/pit.h inc/kstring.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/sched.c -o sched.o
 
-sched_switch.o: sched_switch.asm
-	$(NASM) -f elf64 sched_switch.asm -o sched_switch.o
+sched_switch.o: core/sched_switch.asm
+	$(NASM) -f elf64 core/sched_switch.asm -o sched_switch.o
 
-fslock.o: fslock.c fslock.h sched.h
-	$(CC) $(CFLAGS) -c fslock.c -o fslock.o
+fslock.o: fs/fslock.c inc/fslock.h inc/sched.h
+	$(CC) $(CFLAGS) -c fs/fslock.c -o fslock.o
 
-term.o: term.c term.h graphic_server.h graphic_api.h asset.h syslib.h sched.h pit.h kstring.h kstdio.h
-	$(CC) $(CFLAGS) -c term.c -o term.o
+term.o: core/term.c inc/term.h inc/graphic_server.h inc/graphic_api.h inc/asset.h inc/syslib.h inc/sched.h inc/pit.h inc/kstring.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/term.c -o term.o
 
-syscall.o: syscall.c syscall.h myfs.h fslock.h sched.h pit.h rtc.h kstring.h
-	$(CC) $(CFLAGS) -c syscall.c -o syscall.o
+syscall.o: core/syscall.c inc/syscall.h inc/myfs.h inc/fslock.h inc/sched.h inc/pit.h inc/rtc.h inc/kstring.h
+	$(CC) $(CFLAGS) -c core/syscall.c -o syscall.o
 
-syslib.o: syslib.c syslib.h syscall.h
-	$(CC) $(CFLAGS) -c syslib.c -o syslib.o
+syslib.o: core/syslib.c inc/syslib.h inc/syscall.h
+	$(CC) $(CFLAGS) -c core/syslib.c -o syslib.o
 
-config.o: config.c config.h syslib.h asset.h kstring.h kstdio.h kstdlib.h
-	$(CC) $(CFLAGS) -c config.c -o config.o
+config.o: fs/config.c inc/config.h inc/syslib.h inc/asset.h inc/kstring.h inc/kstdio.h inc/kstdlib.h
+	$(CC) $(CFLAGS) -c fs/config.c -o config.o
 
-kernel.o: kernel.c kstdio.h memory.h syscall.h
-	$(CC) $(CFLAGS) -c kernel.c -o kernel.o
+kernel.o: core/kernel.c inc/kstdio.h inc/memory.h inc/syscall.h
+	$(CC) $(CFLAGS) -c core/kernel.c -o kernel.o
 
-syscall_entry.o: syscall_entry.asm
-	nasm -f elf64 syscall_entry.asm -o syscall_entry.o
+syscall_entry.o: core/syscall_entry.asm
+	nasm -f elf64 core/syscall_entry.asm -o syscall_entry.o
 
-app.elf: hello_app.c myos_app.h app.ld
-	$(CC) $(CFLAGS) -c hello_app.c -o hello_app.o
-	ld.lld -T app.ld -nostdlib -static -o app.elf hello_app.o
+app.elf: app/hello_app.c app/myos_app.h app/app.ld
+	$(CC) $(CFLAGS) -c app/hello_app.c -o hello_app.o
+	ld.lld -T app/app.ld -nostdlib -static -o app.elf hello_app.o
+astudio.o: app/astudio.c app/astudio.h
+studio_app.o: app/studio_app.c app/astudio.h
+studio.elf: studio_app.o astudio.o
+	ld.lld -T app/app.ld -nostdlib -static -o studio.elf studio_app.o astudio.o
+studio_blob.c: studio.elf
+	python3 mkblob.py studio.elf studio_blob.c studio_blob
+gui_app.o: app/gui_app.c app/astudio.h inc/ga_remote.h
+gui.elf: gui_app.o astudio.o
+	ld.lld -T app/app.ld -nostdlib -static -o gui.elf gui_app.o astudio.o
+gui_blob.c: gui.elf
+	python3 mkblob.py gui.elf gui_blob.c gui_blob
 
 app_blob.c: app.elf mkblob.py
 	python3 mkblob.py app.elf app_blob.c app_blob
@@ -179,5 +199,23 @@ app_blob.c: app.elf mkblob.py
 app_blob.o: app_blob.c
 	$(CC) $(CFLAGS) -c app_blob.c -o app_blob.o
 
-elfload.o: elfload.c elfload.h syslib.h syscall.h sched.h memory.h kstring.h kstdio.h
-	$(CC) $(CFLAGS) -c elfload.c -o elfload.o
+elfload.o: core/elfload.c inc/elfload.h inc/syslib.h inc/syscall.h inc/sched.h inc/memory.h inc/kstring.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c core/elfload.c -o elfload.o
+
+astudio.o: app/astudio.c app/astudio.h inc/ga_remote.h
+	$(CC) $(CFLAGS) -c app/astudio.c -o astudio.o
+studio_app.o: app/studio_app.c app/astudio.h
+	$(CC) $(CFLAGS) -c app/studio_app.c -o studio_app.o
+gui_app.o: app/gui_app.c app/astudio.h inc/ga_remote.h
+	$(CC) $(CFLAGS) -c app/gui_app.c -o gui_app.o
+
+dma.o: mm/dma.c inc/dma.h inc/memory.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c mm/dma.c -o dma.o
+osdisk.o: fs/osdisk.c inc/osdisk.h inc/bdev.h inc/kstdio.h
+	$(CC) $(CFLAGS) -c fs/osdisk.c -o osdisk.o
+ga_remote.o: gfx/ga_remote.c inc/ga_remote.h inc/graphic_server.h inc/graphic_api.h
+	$(CC) $(CFLAGS) -c gfx/ga_remote.c -o ga_remote.o
+fblock.o: gfx/fblock.c inc/fblock.h inc/sched.h
+	$(CC) $(CFLAGS) -c gfx/fblock.c -o fblock.o
+sxnl.o: sec/sxnl.c inc/sxnl.h inc/kstdio.h inc/sched.h inc/pit.h
+	$(CC) $(CFLAGS) -c sec/sxnl.c -o sxnl.o

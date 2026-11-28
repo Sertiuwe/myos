@@ -1,3 +1,4 @@
+#include "fblock.h"
 #include "cursor.h"
 #include "kstring.h"
 
@@ -89,6 +90,7 @@ void cursor_init(uint32_t *fb, uint16_t w, uint16_t h, uint16_t pitch, uint8_t b
 }
 
 void cursor_update(int16_t x, int16_t y) {
+    fb_lock();
     if (!framebuffer) return;
     if (bg_valid && cur_x >= 0)
         restore_bg(cur_x, cur_y);
@@ -96,14 +98,17 @@ void cursor_update(int16_t x, int16_t y) {
     draw_cursor(x, y);
     cur_x = x; cur_y = y;
     bg_valid = 1;
+    fb_unlock();
 }
 
 void cursor_hide(void) {
+    fb_lock();
     if (bg_valid && cur_x >= 0) {
         restore_bg(cur_x, cur_y);
         bg_valid = 0;
         cur_x = -1;
     }
+    fb_unlock();
 }
 
 void cursor_reset(void) {

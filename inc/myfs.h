@@ -22,6 +22,7 @@ typedef struct {
 } myfs_inode_t;
 
 int  myfs_mount(const char *devname);
+int  myfs_mount_vol(const char *devname, uint64_t base_lba, const char *prefix);
 void myfs_umount(void);
 
 int  myfs_read(uint16_t ino, uint32_t off, void *buf, uint32_t len);

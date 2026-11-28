@@ -380,7 +380,7 @@ void term_open(void) {
     strcpy(t->cwd, "/");
     t->hidx = -1;
     const asset_theme_t *th = asset_theme();
-    tput(t, th->accent, "MyOS terminal - each window is its own scheduler task\n");
+    tput(t, th->accent, "XNL terminal - each window is its own scheduler task\n");
     tput(t, th->text_dim, "type 'help' for commands, arrows for history/scroll\n");
     ga_rect_t r = { 90, 90, 660, 460 };
     t->win = gs_create(asset_str(ASSET_STR_APP_TERM), r, term_paint, term_event, t);

@@ -86,7 +86,7 @@ static const char *icon_names[ASSET_ICO_COUNT] = {
 };
 
 static const char *strings[ASSET_STR_COUNT] = {
-    [ASSET_STR_DESKTOP]        = "MyOS Desktop",
+    [ASSET_STR_DESKTOP]        = "XNL Desktop",
     [ASSET_STR_APP_FILES]      = "File Manager",
     [ASSET_STR_APP_TERM]       = "Terminal",
     [ASSET_STR_APP_VIEWER]     = "File Viewer",

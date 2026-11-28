@@ -1,4 +1,8 @@
+# build artifacts
 *.o
-*.bin
 *.elf
+*.bin
 *.img
+*_blob.c
+# qemu/runtime
+*.log

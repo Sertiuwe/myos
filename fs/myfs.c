@@ -21,13 +21,39 @@ typedef struct __attribute__((packed)) {
     uint32_t root_ino;
 } sb_disk_t;
 
-static bdev_t   *fs_dev;
-static sb_disk_t sb;
-static uint8_t   mounted;
+#define MYFS_MAX_VOL 2
+typedef struct {
+    bdev_t   *dev;
+    sb_disk_t sbk;      /* renamed: 'sb' is a macro */
+    uint64_t  base_lba;
+    uint8_t   mnt;      /* renamed: 'mounted' is a macro */
+    char      prefix[16];
+} myfs_vol_t;
+
+static myfs_vol_t vols[MYFS_MAX_VOL];
+static myfs_vol_t *active;
+
+/* aliases keep the entire existing implementation unchanged */
+#define fs_dev  (active->dev)
+#define sb      (active->sbk)
+#define mounted (active->mnt)
 
 /* --- helpers --- */
-static int read_blk(uint64_t lba, void *buf) { return bcache_read(fs_dev, lba, buf); }
-static int write_blk(uint64_t lba, const void *buf) { return bcache_write(fs_dev, lba, buf); }
+static int read_blk(uint64_t lba, void *buf) {
+    if (!active || !mounted) return -1;
+    if (lba >= sb.total_blocks) return -1;
+    return bcache_read(active->dev, active->base_lba + lba, buf);
+}
+static int write_blk(uint64_t lba, const void *buf) {
+    if (!active || !mounted) return -1;
+    /* GUARD: volume-relative LBA only; never touches the boot/kernel area */
+    if (lba >= sb.total_blocks) {
+        kprintf("myfs: BLOCK GUARD lba=%u beyond volume (%u)\n",
+                (unsigned)lba, (unsigned)sb.total_blocks);
+        return -1;
+    }
+    return bcache_write(active->dev, active->base_lba + lba, buf);
+}
 
 static uint32_t now_unix(void) {
     rtc_time_t t;
@@ -242,7 +268,26 @@ static int dir_add_entry(uint16_t dir_ino, const char *name, uint16_t ino, uint8
     return write_inode(dir_ino, &din);
 }
 
+static const char *select_vol(const char *path) {
+    myfs_vol_t *best = NULL; size_t bl = 0;
+    for (int i = 0; i < MYFS_MAX_VOL; i++) {
+        if (!vols[i].mnt || !vols[i].prefix[0]) continue;
+        size_t pl = strlen(vols[i].prefix);
+        if (strncmp(path, vols[i].prefix, pl) == 0 &&
+            (path[pl] == '/' || path[pl] == '\0') && pl > bl) { best = &vols[i]; bl = pl; }
+    }
+    if (best) {
+        active = best;
+        const char *rest = path + bl;
+        return *rest ? rest : "/";
+    }
+    for (int i = 0; i < MYFS_MAX_VOL; i++)
+        if (vols[i].mnt && !vols[i].prefix[0]) { active = &vols[i]; break; }
+    return path;
+}
+
 static int resolve_path(const char *path, uint16_t *out_ino, uint8_t *out_type) {
+    path = select_vol(path);
     uint16_t cur = sb.root_ino;
     uint8_t tp = 2;
     if (path[0] == '/') path++;
@@ -427,20 +472,42 @@ int myfs_readdir(uint16_t dir_ino, int idx, char *name, size_t namesz, uint16_t 
 }
 
 /* --- mount --- */
-int myfs_mount(const char *devname) {
-    fs_dev = bdev_by_name(devname);
-    if (!fs_dev) return -1;
+int myfs_mount_vol(const char *devname, uint64_t base_lba, const char *prefix) {
+    int slot = -1;
+    for (int i = 0; i < MYFS_MAX_VOL; i++) if (!vols[i].mnt) { slot = i; break; }
+    if (slot < 0) { kprintf("myfs: no free volume slot\n"); return -1; }
+    myfs_vol_t *v = &vols[slot];
+    v->dev = bdev_by_name(devname);
+    if (!v->dev) return -1;
+    v->base_lba = base_lba;
+    v->mnt = 0;
+    v->prefix[0] = '\0';
+    if (prefix) { strncpy(v->prefix, prefix, sizeof(v->prefix)-1); v->prefix[sizeof(v->prefix)-1] = '\0'; }
+    active = v;
     uint8_t buf[MYFS_BLK];
-    if (bcache_read(fs_dev, 0, buf)) return -1;
-    memcpy(&sb, buf, sizeof(sb));
-    if (memcmp(sb.magic, MYFS_MAGIC, 5)) { kprintf("myfs: bad magic\n"); return -1; }
-    mounted = 1;
-    kprintf("myfs: mounted on %s (%u blocks, %u inodes, data@%u)\n",
-            devname, sb.total_blocks, sb.inode_count, sb.data_start);
+    if (bcache_read(v->dev, base_lba, buf)) return -1;
+    memcpy(&v->sbk, buf, sizeof(v->sbk));
+    if (memcmp(v->sbk.magic, MYFS_MAGIC, 5)) {
+        kprintf("myfs: bad magic on %s@%u\n", devname, (unsigned)base_lba);
+        return -1;
+    }
+    if (base_lba + v->sbk.total_blocks > v->dev->sectors) {
+        kprintf("myfs: volume exceeds device end\n");
+        return -1;
+    }
+    v->mnt = 1;
+    kprintf("myfs: '%s' on %s base=%u (%u blocks, %u inodes, data@%u)\n",
+            v->prefix[0] ? v->prefix : "/", devname, (unsigned)base_lba,
+            v->sbk.total_blocks, v->sbk.inode_count, v->sbk.data_start);
     return 0;
 }
 
-void myfs_umount(void) { mounted = 0; fs_dev = NULL; }
+int myfs_mount(const char *devname) { return myfs_mount_vol(devname, 0, ""); }
+
+void myfs_umount(void) {
+    for (int i = 0; i < MYFS_MAX_VOL; i++) { vols[i].mnt = 0; vols[i].dev = NULL; }
+    active = NULL;
+}
 int myfs_rename(const char *oldpath, const char *newpath) {
     uint16_t old_ino; uint8_t old_type;
     if (resolve_path(oldpath, &old_ino, &old_type)) return -1;
@@ -522,7 +589,7 @@ int myfs_rename(const char *oldpath, const char *newpath) {
     return 0;
 }
 
-void myfs_sync(void) {
+static void sync_active(void) {
     if (!mounted || !fs_dev) return;
     bcache_flush(fs_dev);
 }
@@ -535,4 +602,15 @@ uint16_t myfs_root_ino(void) { return sb.root_ino; }
 
 int myfs_resolve(const char *path, uint16_t *ino, uint8_t *type) {
     return resolve_path(path, ino, type);
+}
+
+
+void myfs_sync(void) {
+    myfs_vol_t *save = active;
+    for (int i = 0; i < MYFS_MAX_VOL; i++) {
+        if (!vols[i].mnt) continue;
+        active = &vols[i];
+        sync_active();
+    }
+    active = save;
 }

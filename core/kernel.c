@@ -145,6 +145,7 @@ void kernel_syscall_init(void) {
 }
 
 void kernel_init_ring3(void) {
+    if (ring3_ready) return;   /* already set up: stay silent, stay safe */
     struct desc_ptr old;
     __asm__ volatile("sgdt %0" : "=m"(old));
     int n = (old.limit + 1) / 8;

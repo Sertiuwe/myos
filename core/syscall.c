@@ -1,4 +1,6 @@
+#include "sxnl.h"
 #include "syscall.h"
+#include "ga_remote.h"
 #include "myfs.h"
 #include "fslock.h"
 #include "sched.h"
@@ -41,6 +43,23 @@ int64_t sys_dispatch(uint32_t num, uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6) {
     (void)a4; (void)a5; (void)a6;
     if (num >= 1 && num <= SYS_MAX) sys_calls[num]++;
+    /* Sxnl: reject wild user pointers before any handler touches them */
+    static const struct { uint32_t num; uint8_t arg; } ptr_args[] = {
+        { SYS_OPEN,1 }, { SYS_READ,2 }, { SYS_WRITE,2 }, { SYS_MKDIR,1 },
+        { SYS_UNLINK,1 }, { SYS_RENAME,1 }, { SYS_RENAME,2 }, { SYS_READDIR,3 },
+        { SYS_STAT,1 }, { SYS_STAT,2 }, { SYS_TASKNAME,1 }, { SYS_DATETIME,1 },
+        { SYS_STATS,2 }, { SYS_KPRINT,1 },
+        { SYS_GA_OPEN,1 }, { SYS_GA_CMD,2 }, { SYS_GA_EVENT,2 },
+    };
+    for (unsigned i = 0; i < sizeof(ptr_args)/sizeof(ptr_args[0]); i++) {
+        if (ptr_args[i].num != num) continue;
+        uint64_t v = ptr_args[i].arg == 1 ? a1 : (ptr_args[i].arg == 2 ? a2 : a3);
+        if (!sxnl_user_ok((const void *)(uintptr_t)v, 1)) {
+            sxnl_badptr(v);
+            return SL_EINVAL;
+        }
+    }
+
 
     switch (num) {
     case SYS_OPEN: {
@@ -217,6 +236,11 @@ int64_t sys_dispatch(uint32_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         kernel_user_exit((int)a1);
         return SL_OK;   /* not reached */
     }
+    case SYS_GA_OPEN:    return gar_open((const gar_open_t *)a1);
+    case SYS_GA_CMD:     return gar_cmd((int64_t)a1, (const gar_cmd_t *)a2);
+    case SYS_GA_EVENT:   return gar_event_poll((int64_t)a1, (gar_ev_t *)a2);
+    case SYS_GA_PRESENT: return gar_present((int64_t)a1);
+    case SYS_GA_CLOSE:   return gar_close((int64_t)a1);
     case SYS_KPRINT: {
         const char *msg = (const char *)(uintptr_t)a1;
         if (!msg) return SL_EINVAL;
@@ -250,6 +274,9 @@ const char *sys_name(uint32_t num) {
         [SYS_TASKNAME] = "taskname", [SYS_DATETIME] = "datetime",
         [SYS_STATS] = "stats",     [SYS_KPRINT] = "kprint",
         [SYS_EXIT] = "exit",
+        [SYS_GA_OPEN] = "ga_open", [SYS_GA_CMD] = "ga_cmd",
+        [SYS_GA_EVENT] = "ga_event", [SYS_GA_PRESENT] = "ga_present",
+        [SYS_GA_CLOSE] = "ga_close",
     };
     if (num > SYS_MAX || !names[num]) return "?";
     return names[num];

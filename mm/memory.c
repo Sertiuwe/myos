@@ -43,8 +43,14 @@ static size_t capacity;
 static int ready;
 
 /* До появления IDT прерываний нет. После IDT заменить на pushfq/cli и popfq. */
-static inline uint64_t heap_lock(void) { return 0; }
-static inline void heap_unlock(uint64_t f) { (void)f; }
+static inline uint64_t heap_lock(void) {
+    uint64_t f;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(f) :: "memory");
+    return f;
+}
+static inline void heap_unlock(uint64_t f) {
+    __asm__ volatile("pushq %0; popfq" :: "r"(f) : "memory", "flags");
+}
 
 static inline size_t bsize(const block_t *b) { return (size_t)(b->size_flags & ~0xFULL); }
 static inline int is_free(const block_t *b) { return (b->size_flags & F_FREE) != 0; }

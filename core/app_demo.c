@@ -55,7 +55,7 @@ static void about_paint(gs_window_t *w, void *user) {
     ga_rect_t cl = gs_client(w);
     int32_t y = cl.y + 8;
     int32_t lh = (int32_t)ga_font_h() + 4;
-    ga_text(cl.x + 10, y, "MyOS - custom x86_64 kernel", t->text); y += lh;
+    ga_text(cl.x + 10, y, "XNL - Sxnl Security X, Not Linux", t->text); y += lh;
     ga_text(cl.x + 10, y, "graphic_server: windows / focus / drag", t->text_dim); y += lh;
     ga_text(cl.x + 10, y, "graphic_api: primitives + widgets", t->text_dim); y += lh;
     ga_text(cl.x + 10, y, "asset: theme / metrics / icons", t->text_dim); y += lh * 2;
@@ -73,10 +73,10 @@ void app_demo_open(void) {
     ga_rect_t a = { 60, 60, 620, 460 };
     gs_create(asset_str(ASSET_STR_APP_FILES), a, files_paint, files_event, NULL);
     ga_rect_t b = { 340, 250, 400, 230 };
-    gs_create("About MyOS", b, about_paint, NULL, NULL);
+    gs_create("About XNL", b, about_paint, NULL, NULL);
 }
 
 void app_demo_about(void) {
     ga_rect_t b = { 400, 300, 400, 230 };
-    gs_create("About MyOS", b, about_paint, NULL, NULL);
+    gs_create("About XNL", b, about_paint, NULL, NULL);
 }

@@ -1,73 +1,74 @@
 #!/usr/bin/env python3
-"""Создаёт пустой образ myfs на fs.img. Layout строго соответствует myfs_inode_t:
-   mode(u32) size(u32) nblocks(u16) direct[10](u16) indirect(u16) mtime(u32) = 36 bytes
+"""Format a myfs volume, optionally at an absolute LBA offset inside an image.
+
+Inode layout matches myfs_inode_t exactly (36 bytes):
+  mode(u32) size(u32) nblocks(u16) direct[10](u16) indirect(u16) mtime(u32)
 """
-import struct, sys
+import struct, sys, argparse
 
 BLK = 512
 INODE_SIZE = 64
-INODES_PER_BLK = BLK // INODE_SIZE
 MAGIC = b'MYFS1\x00\x00\x00'
 
-TOTAL_BLOCKS = 16384
-INODE_COUNT  = 256
-BM_BLOCKS    = (TOTAL_BLOCKS + 7) // 8 // BLK
-ITAB_BLOCKS  = (INODE_COUNT * INODE_SIZE + BLK - 1) // BLK
-DATA_START   = 1 + BM_BLOCKS + ITAB_BLOCKS
-
-def write_block(f, lba, data):
-    f.seek(lba * BLK)
-    f.write(data.ljust(BLK, b'\x00'))
+def ceil_div(a, b):
+    return (a + b - 1) // b
 
 def main():
-    img = sys.argv[1] if len(sys.argv) > 1 else 'fs.img'
-    with open(img, 'r+b') as f:
-        # --- Superblock (блок 0) ---
-        sb = struct.pack('<8sIIHHHHI',
-            MAGIC,
-            BLK,
-            TOTAL_BLOCKS,
-            BM_BLOCKS,
-            BM_BLOCKS,
-            1 + BM_BLOCKS,
-            ITAB_BLOCKS,
-            DATA_START)
-        sb += struct.pack('<HI', INODE_COUNT, 2)  # root_ino=2
-        write_block(f, 0, sb)
+    ap = argparse.ArgumentParser()
+    ap.add_argument('img', nargs='?', default='fs.img')
+    ap.add_argument('--base', type=int, default=0,
+                    help='absolute LBA where the volume starts')
+    ap.add_argument('--blocks', type=int, default=16384,
+                    help='volume size in 512-byte blocks')
+    ap.add_argument('--inodes', type=int, default=256)
+    a = ap.parse_args()
 
-        # --- Bitmap блоков (блоки 1..BM_BLOCKS) ---
-        bm = bytearray(BM_BLOCKS * BLK)
-        for b in range(DATA_START + 1):
+    total = a.blocks
+    bm_blocks   = ceil_div(ceil_div(total, 8), BLK)      # proper ceiling
+    itab_blocks = ceil_div(a.inodes * INODE_SIZE, BLK)
+    data_start  = 1 + bm_blocks + itab_blocks
+    if data_start >= total:
+        sys.exit("volume too small for metadata")
+
+    with open(a.img, 'r+b') as f:
+        f.seek(0, 2)
+        size = f.tell()
+        need = (a.base + total) * BLK
+        if size < need:
+            sys.exit(f"image too small: have {size} bytes, need {need}")
+
+        def wblk(rel, data):
+            f.seek((a.base + rel) * BLK)
+            f.write(data.ljust(BLK, b'\x00'))
+
+        sb = struct.pack('<8sIIHHHHI', MAGIC, BLK, total,
+                         bm_blocks, bm_blocks, 1 + bm_blocks,
+                         itab_blocks, data_start)
+        sb += struct.pack('<HI', a.inodes, 2)            # root_ino = 2
+        wblk(0, sb)
+
+        bm = bytearray(bm_blocks * BLK)
+        for b in range(data_start + 1):                  # metadata + root dir
             bm[b // 8] |= (1 << (b % 8))
-        for i in range(BM_BLOCKS):
-            write_block(f, 1 + i, bytes(bm[i*BLK:(i+1)*BLK]))
+        for i in range(bm_blocks):
+            wblk(1 + i, bytes(bm[i*BLK:(i+1)*BLK]))
 
-        # --- Таблица инод (блоки 1+BM_BLOCKS .. ) ---
-        inodes = bytearray(ITAB_BLOCKS * BLK)
-        root_off = 2 * INODE_SIZE
-        mode = 0o40755
+        itab = bytearray(itab_blocks * BLK)
+        struct.pack_into('<IIH10HHI', itab, 2 * INODE_SIZE,
+                         0o40755, 0, 1,
+                         data_start, 0,0,0,0,0,0,0,0,0,
+                         0, 0)
+        for i in range(itab_blocks):
+            wblk(1 + bm_blocks + i, bytes(itab[i*BLK:(i+1)*BLK]))
 
-        # ПРАВИЛЬНЫЙ формат: IIH10HHI = 36 байт, строго соответствует myfs_inode_t
-        struct.pack_into('<IIH10HHI', inodes, root_off,
-            mode,              # uint32_t mode
-            0,                 # uint32_t size  (пустой каталог)
-            1,                 # uint16_t nblocks
-            DATA_START, 0, 0, 0, 0, 0, 0, 0, 0, 0,   # uint16_t direct[10]
-            0,                 # uint16_t indirect
-            0                  # uint32_t mtime
-        )
-        for i in range(ITAB_BLOCKS):
-            write_block(f, 1 + BM_BLOCKS + i, bytes(inodes[i*BLK:(i+1)*BLK]))
+        wblk(data_start, b'')                            # empty root dir
 
-        # --- Корневой каталог (блок DATA_START) ---
-        write_block(f, DATA_START, b'')
-
-        print(f"myfs created: {img}")
-        print(f"  total={TOTAL_BLOCKS} blocks ({TOTAL_BLOCKS*BLK//1024} KiB)")
-        print(f"  bitmap={BM_BLOCKS} blks, inodes={INODE_COUNT} ({ITAB_BLOCKS} blks)")
-        print(f"  data starts at block {DATA_START}")
-        print(f"  root inode=2, root dir block={DATA_START}")
-        print(f"  inode size on disk = {struct.calcsize('<IIH10HHI')} bytes (must be 36)")
+    print(f"myfs volume in {a.img}")
+    print(f"  base LBA   = {a.base}")
+    print(f"  blocks     = {total} ({total*BLK//1024} KiB)")
+    print(f"  bitmap     = {bm_blocks} blks, inodes={a.inodes} ({itab_blocks} blks)")
+    print(f"  data@      = {data_start}  (absolute LBA {a.base + data_start})")
+    print(f"  inode size = {struct.calcsize('<IIH10HHI')} bytes")
 
 if __name__ == '__main__':
     main()

@@ -39,6 +39,12 @@ typedef struct { char name[32]; uint32_t sysnum, flags; } app_import_t;
 
 extern const unsigned char app_blob[];
 extern const unsigned int app_blob_len;
+extern const unsigned char studio_blob[];
+extern const unsigned int studio_blob_len;
+extern const unsigned char gui_blob[];
+extern const unsigned int gui_blob_len;
+int elf_install_demo_gui(void);
+int elf_install_demo_studio(void);
 extern void kernel_init_ring3(void);
 extern int  kernel_user_spawn(uint64_t entry, uint64_t stack_top, const char *name);
 extern int  kernel_user_wait(void);
@@ -51,7 +57,9 @@ static const struct { const char *name; uint32_t num; } kexports[] = {
     {"sl_uptime_ms", SYS_UPTIME_MS}, {"sl_sleep_ms", SYS_SLEEP_MS},
     {"sl_yield", SYS_YIELD}, {"sl_tid", SYS_TID}, {"sl_task_name", SYS_TASKNAME},
     {"sl_datetime", SYS_DATETIME}, {"sl_sysstat", SYS_STATS},
-    {"sl_kprint", SYS_KPRINT}, {"sl_exit", SYS_EXIT},
+    {"sl_kprint", SYS_KPRINT}, {"sl_ga_open", SYS_GA_OPEN}, {"sl_ga_cmd", SYS_GA_CMD},
+     {"sl_ga_event", SYS_GA_EVENT}, {"sl_ga_present", SYS_GA_PRESENT},
+     {"sl_ga_close", SYS_GA_CLOSE}, {"sl_exit", SYS_EXIT},
 };
 
 static int export_lookup(const char *name, uint32_t *out) {
@@ -169,7 +177,7 @@ int elf_info(const char *path) {
     return 0;
 }
 
-int elf_run(const char *path) {
+static int elf_run_inner(const char *path) {
     uint32_t len = 0;
     unsigned char *b = read_file(path, &len);
     if (!b) { kprintf("ELF: cannot read %s\n", path); return -1; }
@@ -177,7 +185,7 @@ int elf_run(const char *path) {
     if (validate(b, len, &h)) { kfree(b); return -1; }
 
     const Elf64_Shdr *ms = find_section(b, h, ".myos.meta");
-    if (!ms) { kprintf("ELF: .myos.meta missing - not a MyOS app\n"); kfree(b); return -1; }
+    if (!ms) { kprintf("ELF: .myos.meta missing - not a XNL app\n"); kfree(b); return -1; }
     const app_meta_t *m = (const app_meta_t *)(b + ms->sh_offset);
     if (memcmp(m->magic, "MYOSAPP1", 8) || m->version != 1) {
         kprintf("ELF: bad app meta\n"); kfree(b); return -1;
@@ -233,6 +241,9 @@ int elf_run(const char *path) {
 }
 
 int elf_install_demo(void) {
+    elf_install_demo_studio();
+    elf_install_demo_gui();
+
     sl_stat_t st;
     if (sl_stat("/hello.elf", &st) == SL_OK) {
         kprintf("ELF: /bin/hello.elf already present, size=%u\n", (unsigned)st.size);
@@ -264,4 +275,81 @@ int elf_install_demo(void) {
     kprintf("ELF: installed %u bytes, verify stat=%d size=%u\n",
             done, r2, r2 == SL_OK ? (unsigned)st2.size : 0u);
     return 0;
+}
+
+
+int elf_install_demo_studio(void) {
+    sl_stat_t st;
+    if (sl_stat("/studio.elf", &st) == SL_OK) {
+        kprintf("ELF: /bin/studio.elf already present, size=%u\n", (unsigned)st.size);
+        if (st.size == studio_blob_len) return 0;
+        kprintf("ELF: size mismatch (want %u), reinstalling\n", (unsigned)studio_blob_len);
+        sl_unlink("/studio.elf");
+    }
+    int rc = sl_mkdir("/bin");
+    kprintf("ELF: mkdir /bin -> %d\n", rc);
+    int fd = sl_open("/studio.elf", SL_O_WRITE | SL_O_CREATE);
+    kprintf("ELF: open -> %d\n", fd);
+    if (fd < 0) return -1;
+    unsigned done = 0;
+    while (done < studio_blob_len) {
+        unsigned chunk = studio_blob_len - done;
+        if (chunk > 512) chunk = 512;
+        int n = sl_write(fd, studio_blob + done, chunk);
+        if (n <= 0) {
+            kprintf("ELF: write failed at %u (rc=%d)\n", done, n);
+            sl_close(fd);
+            return -1;
+        }
+        done += (unsigned)n;
+    }
+    sl_close(fd);
+    sl_sync();
+    sl_stat_t st2;
+    int r2 = sl_stat("/studio.elf", &st2);
+    kprintf("ELF: installed %u bytes, verify stat=%d size=%u\n",
+            done, r2, r2 == SL_OK ? (unsigned)st2.size : 0u);
+    return 0;
+}
+
+int elf_install_demo_gui(void) {
+    sl_stat_t st;
+    if (sl_stat("/gui.elf", &st) == SL_OK) {
+        kprintf("ELF: /bin/gui.elf already present, size=%u\n", (unsigned)st.size);
+        if (st.size == gui_blob_len) return 0;
+        kprintf("ELF: size mismatch (want %u), reinstalling\n", (unsigned)gui_blob_len);
+        sl_unlink("/gui.elf");
+    }
+    int rc = sl_mkdir("/bin");
+    kprintf("ELF: mkdir /bin -> %d\n", rc);
+    int fd = sl_open("/gui.elf", SL_O_WRITE | SL_O_CREATE);
+    kprintf("ELF: open -> %d\n", fd);
+    if (fd < 0) return -1;
+    unsigned done = 0;
+    while (done < gui_blob_len) {
+        unsigned chunk = gui_blob_len - done;
+        if (chunk > 512) chunk = 512;
+        int n = sl_write(fd, gui_blob + done, chunk);
+        if (n <= 0) {
+            kprintf("ELF: write failed at %u (rc=%d)\n", done, n);
+            sl_close(fd);
+            return -1;
+        }
+        done += (unsigned)n;
+    }
+    sl_close(fd);
+    sl_sync();
+    sl_stat_t st2;
+    int r2 = sl_stat("/gui.elf", &st2);
+    kprintf("ELF: installed %u bytes, verify stat=%d size=%u\n",
+            done, r2, r2 == SL_OK ? (unsigned)st2.size : 0u);
+    return 0;
+}
+int elf_run(const char *path) {
+    static kmutex_t elf_mtx; static int inited;
+    if (!inited) { kmutex_init(&elf_mtx); inited = 1; }
+    kmutex_lock(&elf_mtx);          /* one user app at a time: shared user window */
+    int r = elf_run_inner(path);
+    kmutex_unlock(&elf_mtx);
+    return r;
 }

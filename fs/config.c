@@ -12,7 +12,7 @@ static unsigned parse_u_simple(const char *s) {
     return v;
 }
 
-#define CFG_PATH "/config.conf"
+#define CFG_PATH "/conf/graphic.conf"
 
 static os_config_t cur;
 
@@ -28,6 +28,7 @@ os_config_t *config_get(void) { return &cur; }
 const char *config_path(void) { return CFG_PATH; }
 
 int config_load(void) {
+    sl_mkdir("/conf");   /* ignore EEXIST */
     int fd = sl_open(CFG_PATH, SL_O_READ);
     if (fd < 0) return -1;
     static char buf[1024];
@@ -64,10 +65,11 @@ int config_load(void) {
 int config_save(void) {
     char buf[256];
     ksnprintf(buf, sizeof(buf),
-              "# MyOS graphic server configuration\n"
+              "# XNL graphic server configuration\n"
               "theme=%s\ngrid=%d\nshadow=%d\nclock=%d\ndblclick_ms=%u\n",
               cur.theme, cur.grid, cur.shadow, cur.clock,
               (unsigned)cur.dblclick_ms);
+    sl_mkdir("/conf");
     int fd = sl_open(CFG_PATH, SL_O_WRITE | SL_O_CREATE);
     if (fd < 0) return -1;
     int r = sl_write(fd, buf, (uint32_t)strlen(buf));
